@@ -640,21 +640,26 @@ public class BrokerController {
         }
     }
 
+    // 更新全局topic配置表并同步到NameServer，从NameServer响应中获取主节点地址并更新同步从节点
     public synchronized void registerBrokerAll(final boolean checkOrderConfig, boolean oneway) {
+        // 把现有本地的topic配置表转到新的配置表中去
         TopicConfigSerializeWrapper topicConfigWrapper = this.getTopicConfigManager().buildTopicConfigSerializeWrapper();
-
+        // 判断当前的broker没有写或者读权限
+        // 如果没有，则使用Broker默认的权限来生成TopicConfig的副本，并更新原始消息的TopicConfig对象
+        // 主要的目的是确保每个主题都有一个合法的TopicConfig对象，以保证该主题可以在RocketMQ中进行生产和消费
         if (!PermName.isWriteable(this.getBrokerConfig().getBrokerPermission())
             || !PermName.isReadable(this.getBrokerConfig().getBrokerPermission())) {
             ConcurrentHashMap<String, TopicConfig> topicConfigTable = new ConcurrentHashMap<String, TopicConfig>();
             for (TopicConfig topicConfig : topicConfigWrapper.getTopicConfigTable().values()) {
                 TopicConfig tmp =
+                        // 防止之前表中的topic配置项中的权限和broker配置的权限不一致
                     new TopicConfig(topicConfig.getTopicName(), topicConfig.getReadQueueNums(), topicConfig.getWriteQueueNums(),
                         this.brokerConfig.getBrokerPermission());
                 topicConfigTable.put(topicConfig.getTopicName(), tmp);
             }
             topicConfigWrapper.setTopicConfigTable(topicConfigTable);
         }
-
+        // 并且把新的配置表注册到nameServer中去
         RegisterBrokerResult registerBrokerResult = this.brokerOuterAPI.registerBrokerAll(
             this.brokerConfig.getBrokerClusterName(),
             this.getBrokerAddr(),
@@ -665,14 +670,16 @@ public class BrokerController {
             this.filterServerManager.buildNewFilterServerList(),
             oneway,
             this.brokerConfig.getRegisterBrokerTimeoutMills());
-
+        // 拿到NameServer返回结果
         if (registerBrokerResult != null) { // TODO 待读：ha
+            // 根据配置项决定是否在每个周期中更新主节点地址
             if (this.updateMasterHAServerAddrPeriodically && registerBrokerResult.getHaServerAddr() != null) {
+                // 更新主节点地址
                 this.messageStore.updateHaMasterAddress(registerBrokerResult.getHaServerAddr());
             }
-
+            // 把NameServer返回的地址同步到从节点
             this.slaveSynchronize.setMasterAddr(registerBrokerResult.getMasterAddr());
-
+            // 这边是false，如果是顺序消息就更新顺序消息topic的配置项
             if (checkOrderConfig) {
                 this.getTopicConfigManager().updateOrderTopicConfig(registerBrokerResult.getKvTable());
             }

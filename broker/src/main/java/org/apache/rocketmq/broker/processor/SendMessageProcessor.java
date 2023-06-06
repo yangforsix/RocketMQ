@@ -55,6 +55,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         super(brokerController);
     }
 
+    // broker 解析请求
     @Override
     public RemotingCommand processRequest(ChannelHandlerContext ctx, RemotingCommand request) throws RemotingCommandException {
         SendMessageContext mqtraceContext;
@@ -289,6 +290,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         // 如果未开始接收消息，抛出系统异常
         @SuppressWarnings("SpellCheckingInspection")
         final long startTimstamp = this.brokerController.getBrokerConfig().getStartAcceptSendRequestTimeStamp();
+        // 通过对于broker设置中的开始接收请求时间和当前时间判断broker是否可以接收消息
         if (this.brokerController.getMessageStore().now() < startTimstamp) {
             response.setCode(ResponseCode.SYSTEM_ERROR);
             response.setRemark(String.format("broker unable to service, until %s", UtilAll.timeMillisToHumanString2(startTimstamp)));
@@ -297,47 +299,55 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
 
         // 消息配置(Topic配置）校验
         response.setCode(-1);
+        // 校验消息是否正确，主要是消息配置方面，如果出现异常情况，会把响应中的code变更
         super.msgCheck(ctx, requestHeader, response);
+        // 不等于-1就说明，已经出现了异常情况，直接返回响应结果
         if (response.getCode() != -1) {
             return response;
         }
+        // 运行到这里，说明发送到broker的消息相关信息校验结束
 
+        // 获取信息
         final byte[] body = request.getBody();
 
         // 如果队列小于0，从可用队列随机选择
         int queueIdInt = requestHeader.getQueueId();
+        // 获取topic配置
         TopicConfig topicConfig = this.brokerController.getTopicConfigManager().selectTopicConfig(requestHeader.getTopic());
         if (queueIdInt < 0) {
+            // 随机选择一个可以写的队列编号
             queueIdInt = Math.abs(this.random.nextInt() % 99999999) % topicConfig.getWriteQueueNums();
         }
-
-        //
         int sysFlag = requestHeader.getSysFlag();
         if (TopicFilterType.MULTI_TAG == topicConfig.getTopicFilterType()) {
             sysFlag |= MessageSysFlag.MULTI_TAGS_FLAG;
         }
-
         // 对RETRY类型的消息处理。如果超过最大消费次数，则topic修改成"%DLQ%" + 分组名，即加入 死信队列(Dead Letter Queue)
         String newTopic = requestHeader.getTopic();
         if (null != newTopic && newTopic.startsWith(MixAll.RETRY_GROUP_TOPIC_PREFIX)) {
-            // 获取订阅分组配置
+            // 对重试队列消息进行处理
             String groupName = newTopic.substring(MixAll.RETRY_GROUP_TOPIC_PREFIX.length());
+            // 获取订阅分组配置
             SubscriptionGroupConfig subscriptionGroupConfig =
                 this.brokerController.getSubscriptionGroupManager().findSubscriptionGroupConfig(groupName);
             if (null == subscriptionGroupConfig) {
+                // 重试信息没有订阅的消费者，报错
                 response.setCode(ResponseCode.SUBSCRIPTION_GROUP_NOT_EXIST);
                 response.setRemark("subscription group not exist, " + groupName + " " + FAQUrl.suggestTodo(FAQUrl.SUBSCRIPTION_GROUP_NOT_EXIST));
                 return response;
             }
-            // 计算最大可消费次数
+            // 获得最大可重消费次数
             int maxReconsumeTimes = subscriptionGroupConfig.getRetryMaxTimes();
             if (request.getVersion() >= MQVersion.Version.V3_4_9.ordinal()) {
                 maxReconsumeTimes = requestHeader.getMaxReconsumeTimes();
             }
+            // 获得当前消费次数
             int reconsumeTimes = requestHeader.getReconsumeTimes() == null ? 0 : requestHeader.getReconsumeTimes();
-            if (reconsumeTimes >= maxReconsumeTimes) { // 超过最大消费次数
+            if (reconsumeTimes >= maxReconsumeTimes) { // 当前消费次数超过最大消费次数
+                // 生成对应的死信队列名称
                 newTopic = MixAll.getDLQTopic(groupName);
                 queueIdInt = Math.abs(this.random.nextInt() % 99999999) % DLQ_NUMS_PER_GROUP;
+                // 创建该死信队列的配置项，并赋给当前的目标topic配置
                 topicConfig = this.brokerController.getTopicConfigManager().createTopicInSendMessageBackMethod(newTopic, //
                     DLQ_NUMS_PER_GROUP, //
                     PermName.PERM_WRITE, 0
@@ -351,6 +361,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         }
 
         // 创建MessageExtBrokerInner
+        // MessageExtBrokerInner是RocketMQ中的一个类，它用于对消息进行序列化和反序列化操作，并在消息发送和接收时进行传递
         MessageExtBrokerInner msgInner = new MessageExtBrokerInner();
         msgInner.setTopic(newTopic);
         msgInner.setBody(body);
@@ -367,6 +378,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
 
         // 校验是否不允许发送事务消息
         if (this.brokerController.getBrokerConfig().isRejectTransactionMessage()) {
+            // 事务消息校验
             String traFlag = msgInner.getProperty(MessageConst.PROPERTY_TRANSACTION_PREPARED);
             if (traFlag != null) {
                 response.setCode(ResponseCode.NO_PERMISSION);
@@ -376,11 +388,11 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
             }
         }
 
-        // 添加消息
+        // 添加消息，将消息存储起来并获取相应的返回值（对消息格式进行校验，通过后把消息发送到commitLog中存储）
         PutMessageResult putMessageResult = this.brokerController.getMessageStore().putMessage(msgInner);
         if (putMessageResult != null) {
             boolean sendOK = false;
-
+            // 获取发送信息的相应状态，并依据状态设置producer响应内容的code值
             switch (putMessageResult.getPutMessageStatus()) {
                 // Success
                 case PUT_OK:
@@ -432,7 +444,8 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
 
             String owner = request.getExtFields().get(BrokerStatsManager.COMMERCIAL_OWNER);
             if (sendOK) {
-                // 统计
+                // 如果发送成功
+                // 统计（更新了topic中的相关统计变量）
                 this.brokerController.getBrokerStatsManager().incTopicPutNums(msgInner.getTopic());
                 this.brokerController.getBrokerStatsManager().incTopicPutSize(msgInner.getTopic(), putMessageResult.getAppendMessageResult().getWroteBytes());
                 this.brokerController.getBrokerStatsManager().incBrokerPutNums();

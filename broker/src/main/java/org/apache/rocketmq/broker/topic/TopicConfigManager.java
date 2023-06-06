@@ -134,6 +134,8 @@ public class TopicConfigManager extends ConfigManager {
         return this.systemTopicList;
     }
 
+    // topic名称和默认的topic名称是否相同
+    // 相同返回false，不同返回true
     public boolean isTopicCanSendMessage(final String topic) {
         return !topic.equals(MixAll.DEFAULT_TOPIC);
     }
@@ -142,6 +144,8 @@ public class TopicConfigManager extends ConfigManager {
         return this.topicConfigTable.get(topic);
     }
 
+    // 本地topic配置表中有topic配置就直接返回配置
+    // 如果没有就根据默认的topic创建一个新的topic配置返回并持久化
     public TopicConfig createTopicInSendMessageMethod(final String topic, final String defaultTopic,
         final String remoteAddress, final int clientDefaultTopicQueueNums, final int topicSysFlag) {
         TopicConfig topicConfig = null;
@@ -150,21 +154,25 @@ public class TopicConfigManager extends ConfigManager {
         try {
             if (this.lockTopicConfigTable.tryLock(LOCK_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
                 try {
+                    // 从本地表中取出topic配置
                     topicConfig = this.topicConfigTable.get(topic);
                     if (topicConfig != null)
                         return topicConfig;
-
+                    // 本地配置表中没有，就根据默认的topic拿取配置
                     TopicConfig defaultTopicConfig = this.topicConfigTable.get(defaultTopic);
                     if (defaultTopicConfig != null) {
+                        // 如果和DEFAULT_TOPIC名字相同
                         if (defaultTopic.equals(MixAll.DEFAULT_TOPIC)) {
+                            // 就需要判断本地配置的是否可以新建topic配置项是否开启
                             if (!this.brokerController.getBrokerConfig().isAutoCreateTopicEnable()) {
+                                // 不开启，则设置对应的权限
                                 defaultTopicConfig.setPerm(PermName.PERM_READ | PermName.PERM_WRITE);
                             }
                         }
-
                         if (PermName.isInherited(defaultTopicConfig.getPerm())) {
+                            // 创建一个新的topic配置项
                             topicConfig = new TopicConfig(topic);
-
+                            // 对新建的配置项的其余参数进行塞值
                             int queueNums = clientDefaultTopicQueueNums > defaultTopicConfig.getWriteQueueNums() ? defaultTopicConfig
                                     .getWriteQueueNums() : clientDefaultTopicQueueNums;
 
@@ -186,16 +194,16 @@ public class TopicConfigManager extends ConfigManager {
                     } else {
                         LOG.warn("Create new topic failed, because the default topic[{}] not exist. producer:[{}]", defaultTopic, remoteAddress);
                     }
-
+                    // topic配置参数新建成功
                     if (topicConfig != null) {
                         LOG.info("Create new topic by default topic:[{}] config:[{}] producer:[{}]", defaultTopic, topicConfig, remoteAddress);
-
+                        // 本地topic配置表中加入配置
                         this.topicConfigTable.put(topic, topicConfig);
-
+                        // 本地topic配置表版本迭代
                         this.dataVersion.nextVersion();
-
+                        // flag置为创建了新的topic配置项
                         createNew = true;
-
+                        // 配置项持久化
                         this.persist();
                     }
                 } finally {
@@ -205,11 +213,12 @@ public class TopicConfigManager extends ConfigManager {
         } catch (InterruptedException e) {
             LOG.error("createTopicInSendMessageMethod exception", e);
         }
-
+        // 如果创建了新的topic配置，就需要更新全局topic配置表
         if (createNew) {
+            // 更新全局topic配置表并同步到NameServer，从NameServer响应中获取主节点地址并更新同步从节点
             this.brokerController.registerBrokerAll(false, true);
         }
-
+        // 返回相关的配置项
         return topicConfig;
     }
 

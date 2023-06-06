@@ -277,13 +277,15 @@ public class DefaultMessageStore implements MessageStore {
         }
     }
 
+    // 对消息进行格式校验，通过后发送到commitLog中存储
     public PutMessageResult putMessage(MessageExtBrokerInner msg) {
+        // 判断broker当前状态是否为关机状态
         if (this.shutdown) {
             log.warn("message store has shutdown, so putMessage is forbidden");
             return new PutMessageResult(PutMessageStatus.SERVICE_NOT_AVAILABLE, null);
         }
 
-        // 从节点不允许写入
+        // 如果当前节点是从节点不允许写入
         if (BrokerRole.SLAVE == this.messageStoreConfig.getBrokerRole()) {
             long value = this.printTimes.getAndIncrement();
             if ((value % 50000) == 0) {
@@ -293,7 +295,7 @@ public class DefaultMessageStore implements MessageStore {
             return new PutMessageResult(PutMessageStatus.SERVICE_NOT_AVAILABLE, null);
         }
 
-        // store是否允许写入
+        // store是否允许写入，判断当前存储文件是否为可写状态
         if (!this.runningFlags.isWriteable()) {
             long value = this.printTimes.getAndIncrement();
             if ((value % 50000) == 0) {
@@ -305,18 +307,18 @@ public class DefaultMessageStore implements MessageStore {
             this.printTimes.set(0);
         }
 
-        // 消息过长
+        // 消息的topic长度大于127
         if (msg.getTopic().length() > Byte.MAX_VALUE) {
             log.warn("putMessage message topic length too long " + msg.getTopic().length());
             return new PutMessageResult(PutMessageStatus.MESSAGE_ILLEGAL, null);
         }
 
-        // 消息附加属性过长
+        // 消息附加属性过长大于32767
         if (msg.getPropertiesString() != null && msg.getPropertiesString().length() > Short.MAX_VALUE) {
             log.warn("putMessage message properties length too long " + msg.getPropertiesString().length());
             return new PutMessageResult(PutMessageStatus.PROPERTIES_SIZE_EXCEEDED, null);
         }
-
+        // 判断操作系统缓存页繁忙
         if (this.isOSPageCacheBusy()) {
             return new PutMessageResult(PutMessageStatus.OS_PAGECACHE_BUSY, null);
         }
@@ -324,7 +326,7 @@ public class DefaultMessageStore implements MessageStore {
         long beginTime = this.getSystemClock().now();
         // 添加消息到commitLog
         PutMessageResult result = this.commitLog.putMessage(msg);
-
+        // 对存储时间的处理
         long eclipseTime = this.getSystemClock().now() - beginTime;
         if (eclipseTime > 500) {
             log.warn("putMessage not in lock eclipse time(ms)={}, bodyLength={}", eclipseTime, msg.getBody().length);

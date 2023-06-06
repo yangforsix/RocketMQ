@@ -48,6 +48,7 @@ public class BrokerStartup {
     public static String configFile = null;
     public static Logger log;
 
+    // broker启动！
     public static void main(String[] args) {
         start(createBrokerController(args));
     }
@@ -72,6 +73,7 @@ public class BrokerStartup {
         return null;
     }
 
+    // 创建全局的BrokerController
     public static BrokerController createBrokerController(String[] args) {
         System.setProperty(RemotingCommand.REMOTING_VERSION_KEY, Integer.toString(MQVersion.CURRENT_VERSION));
 

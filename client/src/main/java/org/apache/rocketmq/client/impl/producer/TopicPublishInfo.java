@@ -97,18 +97,26 @@ public class TopicPublishInfo {
 
     public MessageQueue selectOneMessageQueue(final String lastBrokerName) {
         if (lastBrokerName == null) {
+            // 第一次发送信息，随机根据index选则一个消息队列
             return selectOneMessageQueue();
         } else {
+            // 重试阶段
+            // index自增
             int index = this.sendWhichQueue.getAndIncrement();
+            // 再次获取另外的消息队列
             for (int i = 0; i < this.messageQueueList.size(); i++) {
                 int pos = Math.abs(index++) % this.messageQueueList.size();
                 if (pos < 0)
                     pos = 0;
                 MessageQueue mq = this.messageQueueList.get(pos);
+                // 如果这个消息队列的broker名称不和上一次发送的broker名称不同
                 if (!mq.getBrokerName().equals(lastBrokerName)) {
+                    // 把获取到的消息队列返回
                     return mq;
                 }
             }
+            // 走到这一步说明:要么是这个broker下没有消息队列，要么就是还是原来的broker
+            // index自增再选择一次
             return selectOneMessageQueue();
         }
     }

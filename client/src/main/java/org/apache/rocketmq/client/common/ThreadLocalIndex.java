@@ -34,7 +34,7 @@ public class ThreadLocalIndex {
 
     /**
      * 获取当前线程数列号，并加一
-     *
+     * 没有index就随机一个，有就在原来基础上加一
      * @return 序列号
      */
     public int getAndIncrement() {

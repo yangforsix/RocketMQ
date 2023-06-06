@@ -17,6 +17,7 @@
 
 package org.apache.rocketmq.client;
 
+import org.apache.commons.lang3.StringUtils;
 import org.apache.rocketmq.client.exception.MQClientException;
 import org.apache.rocketmq.client.producer.DefaultMQProducer;
 import org.apache.rocketmq.common.MixAll;
@@ -84,19 +85,20 @@ public class Validators {
 
     /**
      * Validate message
-     *
+     * 对传输消息的格式校验（消息体和topic）
      * @param msg 消息
      * @param defaultMQProducer producer
      * @throws MQClientException 当 msg 格式不正确
      */
     public static void checkMessage(Message msg, DefaultMQProducer defaultMQProducer)
         throws MQClientException {
+        // msg不为null
         if (null == msg) {
             throw new MQClientException(ResponseCode.MESSAGE_ILLEGAL, "the message is null");
         }
-        // topic
+        // topic的相关格式校验
         Validators.checkTopic(msg.getTopic());
-        // body
+        // body不为null
         if (null == msg.getBody()) {
             throw new MQClientException(ResponseCode.MESSAGE_ILLEGAL, "the message body is null");
         }
@@ -104,7 +106,7 @@ public class Validators {
         if (0 == msg.getBody().length) {
             throw new MQClientException(ResponseCode.MESSAGE_ILLEGAL, "the message body length is zero");
         }
-
+        // 传输消息体的长度要小于等于4 * 1024 * 1024
         if (msg.getBody().length > defaultMQProducer.getMaxMessageSize()) {
             throw new MQClientException(ResponseCode.MESSAGE_ILLEGAL,
                 "the message body size over max value, MAX: " + defaultMQProducer.getMaxMessageSize());
@@ -113,26 +115,28 @@ public class Validators {
 
     /**
      * Validate topic
-     *
+     * topic校验
      * @param topic
      * @throws MQClientException
      */
     public static void checkTopic(String topic) throws MQClientException {
+        // topic判空,就是字符串层级的判空
         if (UtilAll.isBlank(topic)) {
             throw new MQClientException("The specified topic is blank", null);
         }
-
+        // 判断topic名称是否符合"^[%|a-zA-Z0-9_-]+$"
         if (!regularExpressionMatcher(topic, PATTERN)) {
             throw new MQClientException(String.format(
                 "The specified topic[%s] contains illegal characters, allowing only %s", topic,
                 VALID_PATTERN_STR), null);
         }
-
+        // 判断topic的长度不应该大于等于255
         if (topic.length() > CHARACTER_MAX_LENGTH) {
             throw new MQClientException("The specified topic is longer than topic max length 255.", null);
         }
 
         //whether the same with system reserved keyword
+        // topic名称不为TBW102
         if (topic.equals(MixAll.DEFAULT_TOPIC)) {
             throw new MQClientException(
                 String.format("The topic[%s] is conflict with default topic.", topic), null);

@@ -347,7 +347,7 @@ public class MQClientAPIImpl {
                     } catch (Throwable e) {
                         //
                     }
-
+                    // 根据返回结果，将故障信息更新到本地的故障表
                     producer.updateFaultItem(brokerName, System.currentTimeMillis() - responseFuture.getBeginTimestamp(), false);
                     return;
                 }
@@ -1199,10 +1199,12 @@ public class MQClientAPIImpl {
         RemotingCommand response = this.remotingClient.invokeSync(null, request, timeoutMillis);
         assert response != null;
         switch (response.getCode()) {
+            // topic不存在
             case ResponseCode.TOPIC_NOT_EXIST: {
                 // TODO LOG
                 break;
             }
+            // 获取成功，把相应信息转成json格式返回
             case ResponseCode.SUCCESS: {
                 byte[] body = response.getBody();
                 if (body != null) {
@@ -1237,6 +1239,7 @@ public class MQClientAPIImpl {
         assert response != null;
         switch (response.getCode()) {
             case ResponseCode.TOPIC_NOT_EXIST: {
+                // 对不是默认的topic的日志输出
                 if (!topic.equals(MixAll.DEFAULT_TOPIC))
                     log.warn("get Topic [{}] RouteInfoFromNameServer is not exist value", topic);
                 break;

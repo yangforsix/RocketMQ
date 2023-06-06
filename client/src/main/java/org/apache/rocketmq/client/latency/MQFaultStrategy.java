@@ -54,31 +54,41 @@ public class MQFaultStrategy {
      * @return 消息队列
      */
     public MessageQueue selectOneMessageQueue(final TopicPublishInfo tpInfo, final String lastBrokerName) {
+        // 判断发送消息延迟容错开关有没有打开，默认关闭
         if (this.sendLatencyFaultEnable) {
             try {
                 // 获取 brokerName=lastBrokerName && 可用的一个消息队列
                 int index = tpInfo.getSendWhichQueue().getAndIncrement();
                 for (int i = 0; i < tpInfo.getMessageQueueList().size(); i++) {
+                    // 除余现有队列数
                     int pos = Math.abs(index++) % tpInfo.getMessageQueueList().size();
                     if (pos < 0)
                         pos = 0;
+                    // 拿到消息队列
                     MessageQueue mq = tpInfo.getMessageQueueList().get(pos);
+                    // 去本地的故障表里面查找这个broker在这个时间段有没有故障以此来判断是否可用
                     if (latencyFaultTolerance.isAvailable(mq.getBrokerName())) {
                         if (null == lastBrokerName || mq.getBrokerName().equals(lastBrokerName))
+                            // 可用就返回mq
                             return mq;
                     }
                 }
+                // 运行到这里，说明这个topic发布信息中的所有的消息队列对应broker没一个可用的
                 // 选择一个相对好的broker，并获得其对应的一个消息队列，不考虑该队列的可用性
                 final String notBestBroker = latencyFaultTolerance.pickOneAtLeast();
+                // 通过之前获取到最新的的topic发布信息中获取到这个broker名称下的可用的消息队列个数
                 int writeQueueNums = tpInfo.getQueueIdByBroker(notBestBroker);
                 if (writeQueueNums > 0) {
+                    // 再次选择一个消息队列
                     final MessageQueue mq = tpInfo.selectOneMessageQueue();
                     if (notBestBroker != null) {
                         mq.setBrokerName(notBestBroker);
                         mq.setQueueId(tpInfo.getSendWhichQueue().getAndIncrement() % writeQueueNums);
                     }
+                    // 选择另一个broker完毕，返回其下对应的一个消息队列进行发送
                     return mq;
                 } else {
+                    // 如果这个broker下没有消息对了的话，就在本地缓存的故障列表中把这个故障移除
                     latencyFaultTolerance.remove(notBestBroker);
                 }
             } catch (Exception e) {
@@ -87,6 +97,7 @@ public class MQFaultStrategy {
             // 选择一个消息队列，不考虑队列的可用性
             return tpInfo.selectOneMessageQueue();
         }
+        // 延迟容错没有开
         // 获得 lastBrokerName 对应的一个消息队列，不考虑该队列的可用性
         return tpInfo.selectOneMessageQueue(lastBrokerName);
     }

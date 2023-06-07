@@ -308,12 +308,13 @@ public class MappedFile extends ReferenceResource {
     }
 
     /**
-     * flush
+     * flush 刷盘操作
      *
      * @param flushLeastPages flush最小页数
      * @return The current flushed position
      */
     public int flush(final int flushLeastPages) {
+        // 判断条件
         if (this.isAbleToFlush(flushLeastPages)) {
             if (this.hold()) {
                 int value = getReadPosition();
@@ -340,7 +341,7 @@ public class MappedFile extends ReferenceResource {
     }
 
     /**
-     * commit
+     * commit 	异步刷盘 && 开启内存字节缓冲区
      * 当{@link #writeBuffer}为null时，直接返回{@link #wrotePosition}
      *
      * @param commitLeastPages commit最小页数
@@ -353,6 +354,7 @@ public class MappedFile extends ReferenceResource {
         }
         if (this.isAbleToCommit(commitLeastPages)) {
             if (this.hold()) {
+                // commit具体实现
                 commit0(commitLeastPages);
                 this.release();
             } else {
@@ -406,15 +408,17 @@ public class MappedFile extends ReferenceResource {
     private boolean isAbleToFlush(final int flushLeastPages) {
         int flush = this.flushedPosition.get();
         int write = getReadPosition();
-
+        // 当前mappedFile满了就允许刷盘
         if (this.isFull()) {
             return true;
         }
-
+        // 通过限制满多少操作系统页缓存数来限制刷盘数据速度
         if (flushLeastPages > 0) {
+            // 刷入操作系统页缓存所需要的page数量是否大于等于最小页数
+            // 也就是刷入数据量达到了操作系统单个页缓存的大小就允许刷新
             return ((write / OS_PAGE_SIZE) - (flush / OS_PAGE_SIZE)) >= flushLeastPages;
         }
-
+        // flushLeastPages = 0，说明不限制，立刻刷盘
         return write > flush;
     }
 
@@ -424,7 +428,8 @@ public class MappedFile extends ReferenceResource {
      * 2. commitLeastPages > 0 && 未commit部分超过commitLeastPages
      * 3. commitLeastPages = 0 && 有新写入部分
      *
-     * @param commitLeastPages commit最小分页
+     * @param commitLeastPages commit最小分页 同理于FlushRealTimeService中的flushLeastPages
+     *                         判断逻辑一致
      * @return 是否能够写入
      */
     protected boolean isAbleToCommit(final int commitLeastPages) {

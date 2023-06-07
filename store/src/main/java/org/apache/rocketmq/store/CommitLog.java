@@ -652,6 +652,7 @@ public class CommitLog {
 
             // 当不存在映射文件时，进行创建
             if (null == mappedFile || mappedFile.isFull()) {
+                // 获取到当前可写入的mappedFile（最后一个或者是新创建的）
                 mappedFile = this.mappedFileQueue.getLastMappedFile(0); // Mark: NewFile may be cause noise
             }
             if (null == mappedFile) {
@@ -661,7 +662,7 @@ public class CommitLog {
                 return new PutMessageResult(PutMessageStatus.CREATE_MAPEDFILE_FAILED, null);
             }
 
-            // 存储消息
+            // 向之前获取到的mapperFile中存储消息
             // 这里存储到commitLog中其实底层使用的是MappedByteBuffer
             // MappedByteBuffer使用内存映射文件的方式来实现文件的读写，可以避免传统的I/O操作中涉及的缓冲区复制和数据拷贝，是零拷贝的一种实现方式
             // 最终通过固定格式一个数字一个数字地写入到commitLog中存储
@@ -673,6 +674,7 @@ public class CommitLog {
                     // MappedByteBuffer 存储不了msg大小的内容
                     unlockMappedFile = mappedFile;
                     // Create a new file, re-write the message
+                    // 复用之前的方法，这里应该是创建一个新的mappedFile
                     mappedFile = this.mappedFileQueue.getLastMappedFile(0);
                     if (null == mappedFile) {
                         // XXX: warn and notify me
@@ -680,6 +682,7 @@ public class CommitLog {
                         beginTimeInLock = 0;
                         return new PutMessageResult(PutMessageStatus.CREATE_MAPEDFILE_FAILED, result);
                     }
+                    // 创建成功，再次尝试存储消息
                     result = mappedFile.appendMessage(msg, this.appendMessageCallback);
                     break;
                 case MESSAGE_SIZE_EXCEEDED:
@@ -700,30 +703,38 @@ public class CommitLog {
             // 释放写入锁
             releasePutMessageLock();
         }
-
+        // 写入成功才会执行到这里
         if (eclipseTimeInLock > 500) {
             log.warn("[NOTIFYME]putMessage in lock cost time(ms)={}, bodyLength={} AppendMessageResult={}", eclipseTimeInLock, msg.getBody().length, result);
         }
 
         // TODO 待读：
+        // 如果发生了: mappedFile存储不下消息并创建了新的mappedFile 的话 并且配置了warmMapedFileEnable为true
         if (null != unlockMappedFile && this.defaultMessageStore.getMessageStoreConfig().isWarmMapedFileEnable()) {
+            // 解锁 ？
             this.defaultMessageStore.unlockMappedFile(unlockMappedFile);
         }
 
         PutMessageResult putMessageResult = new PutMessageResult(PutMessageStatus.PUT_OK, result);
 
         // Statistics
+        // 更新CommitLog的统计信息
         storeStatsService.getSinglePutMessageTopicTimesTotal(msg.getTopic()).incrementAndGet();
         storeStatsService.getSinglePutMessageTopicSizeTotal(topic).addAndGet(result.getWroteBytes());
 
-        // 进行同步||异步 flush||commit
+        // 进行同步||异步 flush||commit 刷盘
         GroupCommitRequest request = null;
+        // 刷盘方式1-开启内存缓冲区: 写入 -> 内存字节缓冲区(writeBuffer) -> 提交(commit)到文件通道(fileChannel)
+        // 刷盘方式2:写入映射文件字节缓冲区(mappedByteBuffer) -> 映射文件字节缓冲区(mappedByteBuffer)flush 【零拷贝方式】
         // Synchronization flush
+        // 同步刷盘
         if (FlushDiskType.SYNC_FLUSH == this.defaultMessageStore.getMessageStoreConfig().getFlushDiskType()) {
             final GroupCommitService service = (GroupCommitService) this.flushCommitLogService;
+            // 判断消息是否需要等待保存（刷盘）
             if (msg.isWaitStoreMsgOK()) {
                 request = new GroupCommitRequest(result.getWroteOffset() + result.getWroteBytes());
                 service.putRequest(request);
+                // 等待刷盘时长 5s
                 boolean flushOK = request.waitForFlush(this.defaultMessageStore.getMessageStoreConfig().getSyncFlushTimeout());
                 if (!flushOK) {
                     log.error("do groupcommit, wait for flush failed, topic: " + msg.getTopic() + " tags: " + msg.getTags()
@@ -731,14 +742,19 @@ public class CommitLog {
                     putMessageResult.setPutMessageStatus(PutMessageStatus.FLUSH_DISK_TIMEOUT);
                 }
             } else {
+                // 不等待，不创建请求主动刷盘
+                // 等待操作系统去落盘page cache
                 service.wakeup();
             }
         }
         // Asynchronous flush
+        // 异步刷盘
         else {
             if (!this.defaultMessageStore.getMessageStoreConfig().isTransientStorePoolEnable()) {
+                //异步刷盘 && 关闭内存字节缓冲区，也不会创建请求刷盘
                 flushCommitLogService.wakeup(); // important：唤醒commitLog线程，进行flush
             } else {
+                // 异步刷盘 && 开启内存字节缓冲区，也不会创建请求刷盘
                 commitLogService.wakeup();
             }
         }
@@ -746,18 +762,22 @@ public class CommitLog {
         // Synchronous write double 如果是同步Master，同步到从节点
         if (BrokerRole.SYNC_MASTER == this.defaultMessageStore.getMessageStoreConfig().getBrokerRole()) {
             HAService service = this.defaultMessageStore.getHaService();
+            // 判断消息是否需要等待保存（主从同步）
             if (msg.isWaitStoreMsgOK()) {
                 // Determine whether to wait
+                // 判断能否一次同步
                 if (service.isSlaveOK(result.getWroteOffset() + result.getWroteBytes())) {
                     if (null == request) {
                         request = new GroupCommitRequest(result.getWroteOffset() + result.getWroteBytes());
                     }
+                    // 进行主从同步还是使用 GroupCommitRequest 请求
                     service.putRequest(request);
-
                     // 唤醒WriteSocketService
+                    // 唤醒服务通知线程
                     service.getWaitNotifyObject().wakeupAll();
-
+                    // 等待同步成功，超时时间5s
                     boolean flushOK = request.waitForFlush(this.defaultMessageStore.getMessageStoreConfig().getSyncFlushTimeout());
+                    // 等待同步时长超过5s，返回值中设置相应的状态量
                     if (!flushOK) {
                         log.error("do sync transfer other node, wait return, but failed, topic: " + msg.getTopic() + " tags: "
                             + msg.getTags() + " client address: " + msg.getBornHostString());
@@ -766,6 +786,7 @@ public class CommitLog {
                 }
                 // Slave problem
                 else {
+                    // 一次同步不了或者同步校验没有通过就在返回值中塞入状态，告知producer
                     // Tell the producer, slave not available
                     putMessageResult.setPutMessageStatus(PutMessageStatus.SLAVE_NOT_AVAILABLE);
                 }
@@ -996,7 +1017,9 @@ public class CommitLog {
                     // commit
                     boolean result = CommitLog.this.mappedFileQueue.commit(commitDataLeastPages);
                     long end = System.currentTimeMillis();
-                    if (!result) { // TODO 疑问：未写入成功，为啥要唤醒flushCommitLogService
+                    // TODO 疑问：未写入成功，为啥要唤醒flushCommitLogService
+                    if (!result) {
+                        // commit不成功
                         this.lastCommitTimestamp = end; // result = false means some data committed.
                         //now wake up flush thread.
                         flushCommitLogService.wakeup();
@@ -1023,7 +1046,7 @@ public class CommitLog {
     }
 
     /**
-     * 实时 flush commitLog 线程服务
+     * 实时 flush commitLog 线程服务 零拷贝方式
      */
     class FlushRealTimeService extends FlushCommitLogService {
         /**
@@ -1038,7 +1061,7 @@ public class CommitLog {
 
         public void run() {
             CommitLog.log.info(this.getServiceName() + " service started");
-
+            // 用ServiceThread控制线程运行阻塞
             while (!this.isStopped()) {
                 boolean flushCommitLogTimed = CommitLog.this.defaultMessageStore.getMessageStoreConfig().isFlushCommitLogTimed();
                 int interval = CommitLog.this.defaultMessageStore.getMessageStoreConfig().getFlushIntervalCommitLog();
@@ -1162,6 +1185,8 @@ public class CommitLog {
                             // 是否满足需要flush条件，即请求的offset超过flush的offset
                             flushOK = CommitLog.this.mappedFileQueue.getFlushedWhere() >= req.getNextOffset();
                             if (!flushOK) {
+                                // 说明mappedFile中还含有请求中没有flush的内容
+                                // 就进行零拷贝
                                 CommitLog.this.mappedFileQueue.flush(0);
                             }
                         }
@@ -1180,6 +1205,7 @@ public class CommitLog {
                     // Because of individual messages is set to not sync flush, it
                     // will come to this process 不合法的请求，比如message上未设置isWaitStoreMsgOK。
                     // 走到此处的逻辑，相当于发送一条消息，落盘一条消息，实际无批量提交的效果。
+                    // 单条flush同步执行
                     CommitLog.this.mappedFileQueue.flush(0);
                 }
             }

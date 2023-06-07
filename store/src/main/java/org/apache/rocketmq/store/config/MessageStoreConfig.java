@@ -615,6 +615,8 @@ public class MessageStoreConfig {
      *
      * @return <tt>true</tt> or <tt>false</tt>
      */
+    // transientStorePoolEnable 配置开启瞬态存储池 || 开启内存字节缓冲区
+    // 瞬态存储池是一种临时性的存储空间，主要用于存储临时数据或缓存数据
     public boolean isTransientStorePoolEnable() {
         return transientStorePoolEnable && FlushDiskType.ASYNC_FLUSH == getFlushDiskType()
             && BrokerRole.SLAVE != getBrokerRole();

@@ -247,6 +247,7 @@ public class MappedFileQueue {
             }
 
             if (mappedFile != null) {
+                // 标志第一次创建在队列中
                 if (this.mappedFiles.isEmpty()) {
                     mappedFile.setFirstCreateInQueue(true);
                 }

@@ -76,12 +76,14 @@ public class HAService {
         this.groupTransferService.putRequest(request);
     }
 
+    // 通过存完消息之后的偏移量 - 已经主从同步过的偏移量得到需要同步的信息大小
+    // 和设定的单次同步的消息大小做比对，超出溢出大小返回false
     public boolean isSlaveOK(final long masterPutWhere) {
+        // 判断从节点连接数必须要大于0
         boolean result = this.connectionCount.get() > 0;
         result =
             result
-                && ((masterPutWhere - this.push2SlaveMaxOffset.get()) < this.defaultMessageStore
-                .getMessageStoreConfig().getHaSlaveFallbehindMax());
+                && ((masterPutWhere - this.push2SlaveMaxOffset.get()) < this.defaultMessageStore.getMessageStoreConfig().getHaSlaveFallbehindMax());
         return result;
     }
 

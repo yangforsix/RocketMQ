@@ -1022,6 +1022,11 @@ public class CommitLog {
                         // commit不成功
                         this.lastCommitTimestamp = end; // result = false means some data committed.
                         //now wake up flush thread.
+                        // 1. 保证数据的一致性：当数据提交到文件通道失败时，唤醒 FlushCommitLogService 可以确保文件通道中的数据与内存缓冲区中的数据保持一致，避免因为提交失败导致数据丢失或不一致的问题。
+                        // 2. 触发重试机制：唤醒 FlushCommitLogService 可以触发其重试机制，尝试再次将内存缓冲区中的数据提交到文件通道，从而提高数据提交的成功率。
+                        // 3. 保证服务的可用性：如果不唤醒 FlushCommitLogService，数据提交失败后，内存缓冲区中的数据可能无法及时同步到文件通道，导致服务的性能下降，甚至可能影响到整个消息队列的可用性。唤醒 FlushCommitLogService 可以及时发现并处理这种异常情况，保证服务的正常运行。
+                        // ===========================================
+                        // 使用flush重新落盘数据，保证数据一致性
                         flushCommitLogService.wakeup();
                     }
 
@@ -1110,6 +1115,7 @@ public class CommitLog {
             // Normal shutdown, to ensure that all the flush before exit
             boolean result = false;
             for (int i = 0; i < RETRY_TIMES_OVER && !result; i++) {
+                // 失败重试flush操作，默认重试10次
                 result = CommitLog.this.mappedFileQueue.flush(0);
                 CommitLog.log.info(this.getServiceName() + " service shutdown, retry " + (i + 1) + " times " + (result ? "OK" : "Not OK"));
             }

@@ -459,9 +459,11 @@ public class MappedFileQueue {
      */
     public boolean flush(final int flushLeastPages) {
         boolean result = true;
+        // 根据最后flush到的位置offset获取对应的mappedFile
         MappedFile mappedFile = this.findMappedFileByOffset(this.flushedWhere, false);
         if (mappedFile != null) {
             long tmpTimeStamp = mappedFile.getStoreTimestamp();
+            // 执行flush，把consumeQueue中的信息刷入到操作系统的页缓存中
             int offset = mappedFile.flush(flushLeastPages);
             long where = mappedFile.getFileFromOffset() + offset;
             result = where == this.flushedWhere;

@@ -34,6 +34,10 @@ public class ConsumeQueue {
     private static final Logger LOG_ERROR = LoggerFactory.getLogger(LoggerName.STORE_ERROR_LOGGER_NAME);
 
     private final DefaultMessageStore defaultMessageStore;
+
+    // ConsumeQueue 存储在 MappedFile 的内容必须大小是 20B( ConsumeQueue.CQ_STORE_UNIT_SIZE )，有两种内容类型：
+    // 1. MESSAGE_POSITION_INFO ：消息位置信息
+    // 2. BLANK : 文件前置空白占位。当历史 Message 被删除时，需要用 BLANK占位被删除的消息。
     /**
      * 映射文件队列
      */
@@ -365,13 +369,15 @@ public class ConsumeQueue {
     public void putMessagePositionInfoWrapper(long offset, int size, long tagsCode, long storeTimestamp,
         long logicOffset) {
         final int maxRetries = 30;
+        // 判断队列是否可写
         boolean canWrite = this.defaultMessageStore.getRunningFlags().isWriteable();
-        // 多次循环写，直到成功
+        // 多次循环写，直到成功，重试三十次
         for (int i = 0; i < maxRetries && canWrite; i++) {
             // 调用添加位置信息
             boolean result = this.putMessagePositionInfo(offset, size, tagsCode, logicOffset);
             if (result) {
                 // 添加成功，使用消息存储时间 作为 存储check point。
+                // 设置消息的存储时间为重放入消费队列的检查点时间
                 this.defaultMessageStore.getStoreCheckpoint().setLogicsMsgTimestamp(storeTimestamp);
                 return;
             } else {
@@ -380,6 +386,7 @@ public class ConsumeQueue {
                     + " failed, retry " + i + " times");
 
                 try {
+                    // 失败重试间隔1秒
                     Thread.sleep(1000);
                 } catch (InterruptedException e) {
                     log.warn("", e);
@@ -398,7 +405,7 @@ public class ConsumeQueue {
      * @param offset commitLog存储位置
      * @param size 消息长度
      * @param tagsCode 消息tagsCode
-     * @param cqOffset 队列位置
+     * @param cqOffset 队列中的哪个位置
      * @return 是否成功
      */
     private boolean putMessagePositionInfo(final long offset, final int size, final long tagsCode,
@@ -414,9 +421,14 @@ public class ConsumeQueue {
         this.byteBufferIndex.putInt(size);
         this.byteBufferIndex.putLong(tagsCode);
         // 计算consumeQueue存储位置，并获得对应的MappedFile
+        // CQ_STORE_UNIT_SIZE 单元大小为20
         final long expectLogicOffset = cqOffset * CQ_STORE_UNIT_SIZE;
+        // 根据计算得到的expectLogicOffset存储位置拿到对应的mappedFile
         MappedFile mappedFile = this.mappedFileQueue.getLastMappedFile(expectLogicOffset);
         if (mappedFile != null) {
+            // Queue
+            // |   0    |  blank     |   1    |    blank    |    2    |
+            //       - MappedFileQueue[0] -> 6000000B[MappedFile] -
             // 当是ConsumeQueue第一个MappedFile && 队列位置非第一个 && MappedFile未写入内容，则填充前置空白占位
             if (mappedFile.isFirstCreateInQueue() && cqOffset != 0 && mappedFile.getWrotePosition() == 0) { // TODO 疑问：为啥这个操作。目前能够想象到的是，一些老的消息很久没发送，突然发送，这个时候刚好满足。
                 this.minLogicOffset = expectLogicOffset;
@@ -428,6 +440,7 @@ public class ConsumeQueue {
             }
             // 校验consumeQueue存储位置是否合法。TODO 如果不合法，继续写入会不会有问题？
             if (cqOffset != 0) {
+                // 不合法只打印日志
                 long currentLogicOffset = mappedFile.getWrotePosition() + mappedFile.getFileFromOffset();
                 if (expectLogicOffset != currentLogicOffset) {
                     LOG_ERROR.warn(

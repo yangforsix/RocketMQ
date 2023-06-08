@@ -1023,9 +1023,10 @@ public class DefaultMessageStore implements MessageStore {
      * @return 消费队列
      */
     public ConsumeQueue findConsumeQueue(String topic, int queueId) {
-        // 获取 topic 对应的 所有消费队列
+        // 从本地的消费队列集合中获取本broker中 topic 对应的 所有消费队列
         ConcurrentHashMap<Integer, ConsumeQueue> map = consumeQueueTable.get(topic);
         if (null == map) {
+            // 新建流程
             ConcurrentHashMap<Integer, ConsumeQueue> newMap = new ConcurrentHashMap<>(128);
             ConcurrentHashMap<Integer, ConsumeQueue> oldMap = consumeQueueTable.putIfAbsent(topic, newMap);
             if (oldMap != null) {
@@ -1050,7 +1051,7 @@ public class DefaultMessageStore implements MessageStore {
                 logic = newLogic;
             }
         }
-
+        // 返回需要写入的消费队列
         return logic;
     }
 
@@ -1333,8 +1334,8 @@ public class DefaultMessageStore implements MessageStore {
 
     /**
      * 执行调度请求
-     * 1. 非事务消息 或 事务提交消息 建立 消息位置信息 到 ConsumeQueue
-     * 2. 建立 索引信息 到 IndexFile
+     * 1. 非事务消息 或 事务提交消息 建立 消息位置信息 到 ConsumeQueue 【根据topic + 消息队列id通过偏移量搜索的能力】
+     * 2. 建立 索引信息 到 IndexFile 【提供根据key进行搜索的能力】
      *
      * @param req 调度请求
      */
@@ -1351,7 +1352,19 @@ public class DefaultMessageStore implements MessageStore {
             case MessageSysFlag.TRANSACTION_ROLLBACK_TYPE: // 事务消息ROLLBACK
                 break;
         }
+        // ==================================================
+        // indexFile: https://blog.csdn.net/qq_33333654/article/details/126269637
+        // RocketMQ还提供了根据key进行消息查询的功能。该查询是通过store目录中的index子目录中的indexFile进行索引实现的快速查询。当然，这个indexFile中的索
+        // 引数据是在包含了key的消息被发送到Broker时写入的。如果消息中没有包含key，则不会写入
+
+        // 保存数据：
+        // keyHash：消息中指定的业务key的hash值
+        // phyOffset：当前key对应的消息在commitlog中的偏移量commitlog offset
+        // timeDiff：当前key对应消息的存储时间与当前indexFile创建时间的时间差
+        // preIndexNo：当前slot下当前index索引单元的前一个index索引单元的indexNo
+
         // 建立 索引信息 到 IndexFile
+        // 用于判断消息索引是否开启
         if (DefaultMessageStore.this.getMessageStoreConfig().isMessageIndexEnable()) {
             DefaultMessageStore.this.indexService.buildIndex(req);
         }
@@ -1370,7 +1383,9 @@ public class DefaultMessageStore implements MessageStore {
      */
     public void putMessagePositionInfo(String topic, int queueId, long offset, int size, long tagsCode, long storeTimestamp,
         long logicOffset) {
+        // 查找对应的消费队列
         ConsumeQueue cq = this.findConsumeQueue(topic, queueId);
+        // 把信息塞入消费队列中
         cq.putMessagePositionInfoWrapper(offset, size, tagsCode, storeTimestamp, logicOffset);
     }
 
@@ -1606,14 +1621,18 @@ public class DefaultMessageStore implements MessageStore {
          */
         private long lastFlushTimestamp = 0;
 
+        // 也就是说，每次doFlush都是一次尝试flush，只有consumeQueue中的数据量满到flushConsumeQueueLeastPages数量的页数后，才会真正执行flush落盘
+        // 否则都是尝试进行flush操作
         private void doFlush(int retryTimes) {
+            // 获取数据满操作系统页缓存最少多少页数时才进行刷盘，默认2页
             int flushConsumeQueueLeastPages = DefaultMessageStore.this.getMessageStoreConfig().getFlushConsumeQueueLeastPages();
 
             // retryTimes == RETRY_TIMES_OVER时，进行强制flush。主要用于shutdown时。
             if (retryTimes == RETRY_TIMES_OVER) {
                 flushConsumeQueueLeastPages = 0;
             }
-            // 当时间满足flushConsumeQueueThoroughInterval时，即使写入的数量不足flushConsumeQueueLeastPages，也进行flush
+            // 当时间满足flushConsumeQueueThoroughInterval时[距离上一次flush时间间隔超过1min]
+            // 即使写入的数量不足flushConsumeQueueLeastPages，也进行flush
             long logicsMsgTimestamp = 0;
             int flushConsumeQueueThoroughInterval = DefaultMessageStore.this.getMessageStoreConfig().getFlushConsumeQueueThoroughInterval();
             long currentTimeMillis = System.currentTimeMillis();
@@ -1623,10 +1642,13 @@ public class DefaultMessageStore implements MessageStore {
                 logicsMsgTimestamp = DefaultMessageStore.this.getStoreCheckpoint().getLogicsMsgTimestamp();
             }
             // flush消费队列
+            // 获取本地全量消费队列集合
             ConcurrentHashMap<String, ConcurrentHashMap<Integer, ConsumeQueue>> tables = DefaultMessageStore.this.consumeQueueTable;
+            // 遍历消费队列集合中记录的所有消费队列
             for (ConcurrentHashMap<Integer, ConsumeQueue> maps : tables.values()) {
                 for (ConsumeQueue cq : maps.values()) {
                     boolean result = false;
+                    // flush失败重试
                     for (int i = 0; i < retryTimes && !result; i++) {
                         result = cq.flush(flushConsumeQueueLeastPages);
                     }
@@ -1641,19 +1663,24 @@ public class DefaultMessageStore implements MessageStore {
             }
         }
 
+        // 把consumerQueue中的数据保存（flush）到操作系统页缓存中
         public void run() {
             DefaultMessageStore.log.info(this.getServiceName() + " service started");
-
+            // 判断flush 消费队列服务线程是否开启
             while (!this.isStopped()) {
                 try {
+                    // 获取消费队列刷新时间间隔 1s
                     int interval = DefaultMessageStore.this.getMessageStoreConfig().getFlushIntervalConsumeQueue();
+                    // 等待相应时间
                     this.waitForRunning(interval);
+                    // 默认1s flush一次消费队列
                     this.doFlush(1);
                 } catch (Exception e) {
                     DefaultMessageStore.log.warn(this.getServiceName() + " service has exception. ", e);
                 }
             }
-
+            // 关闭时，进行强制刷新
+            // flush失败重试3次
             this.doFlush(RETRY_TIMES_OVER);
 
             DefaultMessageStore.log.info(this.getServiceName() + " service end");
@@ -1672,6 +1699,7 @@ public class DefaultMessageStore implements MessageStore {
 
     /**
      * 重放消息线程服务
+     * write ConsumeQueue
      * 该服务不断生成 消息位置信息 到 消费队列(ConsumeQueue)
      * 该服务不断生成 消息索引 到 索引文件(IndexFile)
      */
@@ -1727,11 +1755,16 @@ public class DefaultMessageStore implements MessageStore {
         }
 
         private void doReput() {
+            // 判断如果可以获得到commitLog就一直循环
             for (boolean doNext = true; this.isCommitLogAvailable() && doNext; ) {
 
                 // TODO 疑问：这个是啥
-                if (DefaultMessageStore.this.getMessageStoreConfig().isDuplicationEnable() //
+                // 判断是否开启了消息的去重，避免同一个消息被重复消费多次
+                // && 重放消息的offset 需要小于 已经落盘到commitLog中的确认偏移量
+                // （确认偏移量是指此时已经成功提交到磁盘中的最小偏移量，当前消息偏移量指当前消费队列中需要保存的消息的commitLog中的偏移量）
+                if (DefaultMessageStore.this.getMessageStoreConfig().isDuplicationEnable()
                     && this.reputFromOffset >= DefaultMessageStore.this.getConfirmOffset()) {
+                    // 等于说明已经是最新的了，大于我认为应该是兜底逻辑。两者都不需要执行重放操作，直接退出循环
                     break;
                 }
 
@@ -1739,18 +1772,20 @@ public class DefaultMessageStore implements MessageStore {
                 SelectMappedBufferResult result = DefaultMessageStore.this.commitLog.getData(reputFromOffset);
                 if (result != null) {
                     try {
+                        // 映射文件开始读取物理位置
                         this.reputFromOffset = result.getStartOffset();
 
-                        // 遍历MappedByteBuffer
+                        // 遍历MappedByteBuffer文件大小
                         for (int readSize = 0; readSize < result.getSize() && doNext; ) {
-                            // 生成重放消息重放调度请求
+                            // 生成重放消息重放调度请求，其中包含了之前获取到的MappedByteBuffer的文件信息
                             DispatchRequest dispatchRequest = DefaultMessageStore.this.commitLog.checkMessageAndReturnSize(result.getByteBuffer(), false, false);
                             int size = dispatchRequest.getMsgSize(); // 消息长度
                             // 根据请求的结果处理
                             if (dispatchRequest.isSuccess()) { // 读取成功
-                                if (size > 0) { // 读取Message
+                                if (size > 0) {
+                                    // 读取Message
                                     DefaultMessageStore.this.doDispatch(dispatchRequest);
-                                    // 通知有新消息
+                                    // 通知有新消息,主从同步
                                     if (BrokerRole.SLAVE != DefaultMessageStore.this.getMessageStoreConfig().getBrokerRole()
                                         && DefaultMessageStore.this.brokerConfig.isLongPollingEnable()) {
                                         DefaultMessageStore.this.messageArrivingListener.arriving(dispatchRequest.getTopic(),
@@ -1758,6 +1793,7 @@ public class DefaultMessageStore implements MessageStore {
                                             dispatchRequest.getTagsCode());
                                     }
                                     // FIXED BUG By shijia
+                                    // 更新当前的重放消息的offset
                                     this.reputFromOffset += size;
                                     readSize += size;
                                     // 统计
@@ -1768,7 +1804,7 @@ public class DefaultMessageStore implements MessageStore {
                                             .getSinglePutMessageTopicSizeTotal(dispatchRequest.getTopic())
                                             .addAndGet(dispatchRequest.getMsgSize());
                                     }
-                                } else if (size == 0) { // 读取到MappedFile文件尾
+                                } else if (size == 0) { // 读取到MappedFile文件尾，跳转指向下一个文件尾
                                     this.reputFromOffset = DefaultMessageStore.this.commitLog.rollNextFile(this.reputFromOffset);
                                     readSize = result.getSize();
                                 }
@@ -1799,10 +1835,11 @@ public class DefaultMessageStore implements MessageStore {
         @Override
         public void run() {
             DefaultMessageStore.log.info(this.getServiceName() + " service started");
-
+            // 判断当前重放服务线程是否被开启
             while (!this.isStopped()) {
                 try {
                     Thread.sleep(1);
+                    // 开启状态下，一毫秒一次执行doReput
                     this.doReput();
                 } catch (Exception e) {
                     DefaultMessageStore.log.warn(this.getServiceName() + " service has exception. ", e);

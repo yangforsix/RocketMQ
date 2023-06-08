@@ -197,6 +197,7 @@ public class IndexService {
     }
 
     public void buildIndex(DispatchRequest req) {
+        // 获取索引文件列表中最后一个也有可能是新建的Index File，如果获取重试失败则为null
         IndexFile indexFile = retryGetAndCreateIndexFile();
         if (indexFile != null) {
             long endPhyOffset = indexFile.getEndPhyOffset();
@@ -206,17 +207,19 @@ public class IndexService {
             if (msg.getCommitLogOffset() < endPhyOffset) {
                 return;
             }
-
+            // 判断消息类型
             final int tranType = MessageSysFlag.getTransactionValue(msg.getSysFlag());
             switch (tranType) {
                 case MessageSysFlag.TRANSACTION_NOT_TYPE:
                 case MessageSysFlag.TRANSACTION_PREPARED_TYPE:
                 case MessageSysFlag.TRANSACTION_COMMIT_TYPE:
+                    // 继续执行
                     break;
                 case MessageSysFlag.TRANSACTION_ROLLBACK_TYPE:
+                    // 回滚直接返回
                     return;
             }
-
+            // 根据唯一key写入index文件
             if (req.getUniqKey() != null) {
                 indexFile = putKey(indexFile, msg, buildKey(topic, req.getUniqKey()));
                 if (indexFile == null) {
@@ -224,7 +227,7 @@ public class IndexService {
                     return;
                 }
             }
-
+            // 根据自定义key塞入indexFile
             if (keys != null && keys.length() > 0) {
                 String[] keyset = keys.split(MessageConst.KEY_SEPARATOR);
                 for (int i = 0; i < keyset.length; i++) {
@@ -243,50 +246,55 @@ public class IndexService {
         }
     }
 
+    // 将消息信息添加到indexFile
     private IndexFile putKey(IndexFile indexFile, DispatchRequest msg, String idxKey) {
         for (boolean ok = indexFile.putKey(idxKey, msg.getCommitLogOffset(), msg.getStoreTimestamp()); !ok; ) {
             log.warn("Index file [" + indexFile.getFileName() + "] is full, trying to create another one");
-
+            // 塞值失败，重新获取indexFile或者新建一个indexFile
             indexFile = retryGetAndCreateIndexFile();
             if (null == indexFile) {
+                // 无法获取、创建indexFile就返回
                 return null;
             }
-
+            // 重试直到成功或者无法获取、创建indexFile
             ok = indexFile.putKey(idxKey, msg.getCommitLogOffset(), msg.getStoreTimestamp());
         }
-
+        // 返回indexFile
         return indexFile;
     }
 
     /**
      * Retries to get or create index file.
-     *
+     * 重试获取indexFile或者新建一个indexFile
      * @return {@link IndexFile} or null on failure.
      */
     public IndexFile retryGetAndCreateIndexFile() {
         IndexFile indexFile = null;
-
+        // 获取失败重试三次
         for (int times = 0; null == indexFile && times < MAX_TRY_IDX_CREATE; times++) {
+            // 获取索引文件列表中最后一个Index File，没有就创建一个返回
             indexFile = this.getAndCreateLastIndexFile();
             if (null != indexFile)
                 break;
 
             try {
                 log.info("Tried to create index file " + times + " times");
+                // 重试间隔1s
                 Thread.sleep(1000);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
         }
-
+        // 重试三次还是失败后，设置文件不可写
         if (null == indexFile) {
             this.defaultMessageStore.getAccessRights().makeIndexFileError();
             log.error("Mark index file cannot build flag");
         }
-
+        // 返回indexFile或者null
         return indexFile;
     }
 
+    // 获取索引文件列表中最后一个Index File，没有就创建一个返回
     public IndexFile getAndCreateLastIndexFile() {
         IndexFile indexFile = null;
         IndexFile prevIndexFile = null;

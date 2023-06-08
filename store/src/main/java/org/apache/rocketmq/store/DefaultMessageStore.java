@@ -1613,6 +1613,7 @@ public class DefaultMessageStore implements MessageStore {
 
     /**
      * flush 消费队列 线程服务
+     * 用于落盘持久化消费队列中的数据
      */
     class FlushConsumeQueueService extends ServiceThread {
         private static final int RETRY_TIMES_OVER = 3;

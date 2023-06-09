@@ -87,8 +87,11 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
     }
 
     /**
-     * 消费者发回消息
-     *
+     * 向消费者发回消息
+     * 当 Consumer 消费某条消息失败时，会调用该接口发回消息。Broker 会存储发回的消息
+     * 这样，下次 Consumer 拉取该消息，能够从 CommitLog 和 ConsumeQueue 顺序读取
+     * 【也就是说，先会校验一堆请求信息是否正确满足要求，然后去查询这个消息，查到后存入到最新的位置，等待consumer下一次拉取消息，即可使得消费者重新消费该消息】
+     * 也就是消费者消费失败后，需要重试也就是尝试重新消费，就会调用本接口为重新消费消息做准备（查找消息后存入队列，等待下次拉取消息拉到后再次消费）
      * @param ctx ctx
      * @param request 请求
      * @return 响应
@@ -168,6 +171,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         }
 
         // 查询消息。若不存在，返回异常错误。（独有）
+        // 先默认拉取4字节数据识别为消息大小size，然后再次通过该大小拉取整条消息来判断有没有该消息
         MessageExt msgExt = this.brokerController.getMessageStore().lookMessageByOffset(requestHeader.getOffset());
         if (null == msgExt) {
             response.setCode(ResponseCode.SYSTEM_ERROR);
@@ -211,7 +215,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
             msgExt.setDelayTimeLevel(delayLevel);
         }
 
-        // 创建MessageExtBrokerInner
+        // 创建MessageExtBrokerInner，重新把查询到的消息包装为一个存消息的请求，将消息存入
         MessageExtBrokerInner msgInner = new MessageExtBrokerInner();
         msgInner.setTopic(newTopic);
         msgInner.setBody(msgExt.getBody());

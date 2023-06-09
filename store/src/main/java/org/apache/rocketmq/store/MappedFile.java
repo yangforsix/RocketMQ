@@ -472,6 +472,7 @@ public class MappedFile extends ReferenceResource {
         if ((pos + size) <= readPosition) {
 
             if (this.hold()) {
+                // 截取相应位置的数据
                 ByteBuffer byteBuffer = this.mappedByteBuffer.slice();
                 byteBuffer.position(pos);
                 ByteBuffer byteBufferNew = byteBuffer.slice();
@@ -497,11 +498,13 @@ public class MappedFile extends ReferenceResource {
      * @return 映射Buffer
      */
     public SelectMappedBufferResult selectMappedBuffer(int pos) {
+        // 获取当前mappedFile中的最大有效位置（最新数据位置）
         int readPosition = getReadPosition();
         if (pos < readPosition && pos >= 0) {
             if (this.hold()) {
                 ByteBuffer byteBuffer = this.mappedByteBuffer.slice();
                 byteBuffer.position(pos);
+                // size为pos位置到最新数据位置
                 int size = readPosition - pos;
                 ByteBuffer byteBufferNew = byteBuffer.slice();
                 byteBufferNew.limit(size);

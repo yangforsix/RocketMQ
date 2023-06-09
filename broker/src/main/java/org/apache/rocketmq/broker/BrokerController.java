@@ -248,7 +248,7 @@ public class BrokerController {
                 }
             }, initialDelay, period, TimeUnit.MILLISECONDS);
 
-            // 定时持久化消费进度
+            // 定时持久化消费进度，启动十秒后开始每五秒执行一次持久化
             this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
                 @Override
                 public void run() {

@@ -379,12 +379,12 @@ public class DefaultMessageStore implements MessageStore {
      */
     public GetMessageResult getMessage(final String group, final String topic, final int queueId, final long offset, final int maxMsgNums,
         final SubscriptionData subscriptionData) {
-        // 是否关闭
+        // 判断消息存储服务是否关闭
         if (this.shutdown) {
             log.warn("message store has shutdown, so getMessage is forbidden");
             return null;
         }
-        // 是否可读
+        // 是否处于可读状态
         if (!this.runningFlags.isReadable()) {
             log.warn("message store is not readable, so getMessage is forbidden " + this.runningFlags.getFlagBits());
             return null;
@@ -398,20 +398,20 @@ public class DefaultMessageStore implements MessageStore {
         long maxOffset = 0;
 
         GetMessageResult getResult = new GetMessageResult();
-
+        // 获得commitLog最大的偏移量
         final long maxOffsetPy = this.commitLog.getMaxOffset();
 
         // 获取消费队列
         ConsumeQueue consumeQueue = findConsumeQueue(topic, queueId);
         if (consumeQueue != null) {
-            minOffset = consumeQueue.getMinOffsetInQueue(); // 消费队列 最小队列编号
-            maxOffset = consumeQueue.getMaxOffsetInQueue(); // 消费队列 最大队列编号
-
-            // 判断 队列位置(offset)
-            if (maxOffset == 0) { // 消费队列无消息
+            minOffset = consumeQueue.getMinOffsetInQueue(); // 获取消费队列当前第一个未消费消息的偏移量（这里已经除单元大小，获得到的是队列中的位置）
+            maxOffset = consumeQueue.getMaxOffsetInQueue(); // 获取消费队列当前记录到的最新消息的偏移量（这里已经除单元大小，获得到的是队列中的位置）
+            // 【以下所有修正，都需要满足条件：主节点 或者 从节点开启校验offset开关，否则不修正】
+            // 判断 队列位置(offset,request中指定的队列位置，请求从该位置开始消费信息)
+            if (maxOffset == 0) { // 消费队列无消息,修正offset从0开始
                 status = GetMessageStatus.NO_MESSAGE_IN_QUEUE;
                 nextBeginOffset = nextOffsetCorrection(offset, 0);
-            } else if (offset < minOffset) { // 查询offset 太小
+            } else if (offset < minOffset) { // 查询offset 太小，修正offset到当前最后一个未消费的信息位置
                 status = GetMessageStatus.OFFSET_TOO_SMALL;
                 nextBeginOffset = nextOffsetCorrection(offset, minOffset);
             } else if (offset == maxOffset) { // 查询offset 超过 消费队列 一个位置
@@ -419,16 +419,20 @@ public class DefaultMessageStore implements MessageStore {
                 nextBeginOffset = nextOffsetCorrection(offset, offset);
             } else if (offset > maxOffset) { // 查询offset 超过 消费队列 太多(大于一个位置)
                 status = GetMessageStatus.OFFSET_OVERFLOW_BADLY;
+                // offset 修正
                 if (0 == minOffset) { // TODO blog 这里是？？为啥0 == minOffset做了特殊判断
-                    nextBeginOffset = nextOffsetCorrection(offset, minOffset);
+                    // 说明这个队列还未被开始消费，重置为0
+                    nextBeginOffset = nextOffsetCorrection(offset, minOffset); // minOffset
                 } else {
-                    nextBeginOffset = nextOffsetCorrection(offset, maxOffset);
+                    // 说明已经越界，修正到最新数据位置
+                    nextBeginOffset = nextOffsetCorrection(offset, maxOffset); // maxOffset
                 }
             } else {
-                // 获得 映射Buffer结果(MappedFile)
+                // 获得 映射Buffer结果(MappedFile)，包括mappedFile中的读取位置范围和读取大小等信息
                 SelectMappedBufferResult bufferConsumeQueue = consumeQueue.getIndexBuffer(offset);
                 if (bufferConsumeQueue != null) {
                     try {
+                        // 先设置状态为：无符合条件的消息
                         status = GetMessageStatus.NO_MATCHED_MESSAGE;
 
                         long nextPhyFileStartOffset = Long.MIN_VALUE; // commitLog下一个文件(MappedFile)对应的开始offset。
@@ -437,8 +441,9 @@ public class DefaultMessageStore implements MessageStore {
                         int i = 0;
                         final int maxFilterMessageCount = 16000;
                         final boolean diskFallRecorded = this.messageStoreConfig.isDiskFallRecorded();
-                        // 循环获取 消息位置信息
+                        // 循环获取 消息位置信息，最多获取800条消息（16000/20）
                         for (; i < bufferConsumeQueue.getSize() && i < maxFilterMessageCount; i += ConsumeQueue.CQ_STORE_UNIT_SIZE) {
+                            // 按照存储格式读取消息
                             long offsetPy = bufferConsumeQueue.getByteBuffer().getLong(); // 消息物理位置offset
                             int sizePy = bufferConsumeQueue.getByteBuffer().getInt(); // 消息长度
                             long tagsCode = bufferConsumeQueue.getByteBuffer().getLong(); // 消息tagsCode
@@ -450,17 +455,20 @@ public class DefaultMessageStore implements MessageStore {
                                     continue;
                             }
                             // 校验 commitLog 是否需要硬盘，无法全部放在内存
+                            // 判断这块消息空间能否在内存中存放
                             boolean isInDisk = checkInDiskByCommitOffset(offsetPy, maxOffsetPy);
-                            // 是否已经获得足够消息
+                            // 是否已经获得足够消息或者消息已经满足条件，消息无法放入内存，最大传输字节数、最大传输消息数是否已满
                             if (this.isTheBatchFull(sizePy, maxMsgNums, getResult.getBufferTotalSize(), getResult.getMessageCount(),
                                 isInDisk)) {
                                 break;
                             }
                             // 判断消息是否符合条件
                             if (this.messageFilter.isMessageMatched(subscriptionData, tagsCode)) {
-                                // 从commitLog获取对应消息ByteBuffer
+                                // 从commitLog获取对应消息ByteBuffer，获得到这条消息的相关信息和截取过后的数据
                                 SelectMappedBufferResult selectResult = this.commitLog.getMessage(offsetPy, sizePy);
                                 if (selectResult != null) {
+                                    // 获取到消息
+                                    // 统计量自增
                                     this.storeStatsService.getGetMessageTransferedMsgCount().incrementAndGet();
                                     getResult.addMessage(selectResult);
                                     status = GetMessageStatus.FOUND;
@@ -487,7 +495,7 @@ public class DefaultMessageStore implements MessageStore {
                             long fallBehind = maxOffsetPy - maxPhyOffsetPulling;
                             brokerStatsManager.recordDiskFallBehindSize(group, topic, queueId, fallBehind);
                         }
-                        // 计算下次拉取消息的消息队列编号
+                        // 计算下次拉取消息的位置（向后一条消息的位置）
                         nextBeginOffset = offset + (i / ConsumeQueue.CQ_STORE_UNIT_SIZE);
                         // 根据剩余可拉取消息字节数与内存判断是否建议读取从节点
                         long diff = maxOffsetPy - maxPhyOffsetPulling;
@@ -1058,7 +1066,7 @@ public class DefaultMessageStore implements MessageStore {
     /**
      * 下一个获取队列offset修正
      * 修正条件：主节点 或者 从节点开启校验offset开关
-     *
+     * 修正操作：返回新队列offset
      * @param oldOffset 老队列offset
      * @param newOffset 新队列offset
      * @return 修正后的队列offset

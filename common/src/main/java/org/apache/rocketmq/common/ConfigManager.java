@@ -96,13 +96,15 @@ public abstract class ConfigManager {
     public abstract void decode(final String jsonString);
 
     /**
-     * 持久化
+     * 持久化 消费进度
      */
     public synchronized void persist() {
+        // 获取具体实现类的编码后的内容
         String jsonString = this.encode(true);
         if (jsonString != null) {
             String fileName = this.configFilePath();
             try {
+                // 将消费进度内容写到文件
                 MixAll.string2File(jsonString, fileName);
             } catch (IOException e) {
                 PLOG.error("persist file Exception, " + fileName, e);
@@ -112,7 +114,7 @@ public abstract class ConfigManager {
 
     /**
      * 编码存储内容
-     *
+     * 消费进度实现类: ConsumerOffsetManager
      * @param prettyFormat 是否格式化
      * @return 内容
      */

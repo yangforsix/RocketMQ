@@ -202,6 +202,9 @@ public class ConsumerOffsetManager extends ConfigManager {
      * @return 编码后的内容
      */
     public String encode(final boolean prettyFormat) {
+        // 本类对象转为json
+        // 唯一的本地表: 消费进度集合
+        // 也就是把本地维护的消费进度表ConcurrentHashMap转为json返回（有个对象{}包外面，里面就一个ConcurrentHashMap的json串）
         return RemotingSerializable.toJson(this, prettyFormat);
     }
 

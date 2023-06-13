@@ -207,6 +207,7 @@ public class PullAPIWrapper {
             this.mQClientFactory.findBrokerAddressInSubscribe(mq.getBrokerName(),
                 this.recalculatePullFromWhichNode(mq), false);
         if (null == findBrokerResult) {
+            // 从NameServer更新topic路由信息
             this.mQClientFactory.updateTopicRouteInfoFromNameServer(mq.getTopic());
             findBrokerResult =
                 this.mQClientFactory.findBrokerAddressInSubscribe(mq.getBrokerName(),
@@ -255,7 +256,7 @@ public class PullAPIWrapper {
 
     /**
      * 计算消息队列拉取消息对应的Broker编号
-     *
+     * 有默认用默认，从本地关系表中拉取，没有就返回主节点编号
      * @param mq 消息队列
      * @return Broker编号
      */
@@ -287,6 +288,7 @@ public class PullAPIWrapper {
         throws MQClientException {
         ConcurrentHashMap<String, TopicRouteData> topicRouteTable = this.mQClientFactory.getTopicRouteTable();
         if (topicRouteTable != null) {
+            // 从本地获取到路由信息
             TopicRouteData topicRouteData = topicRouteTable.get(topic);
             List<String> list = topicRouteData.getFilterServerTable().get(brokerAddr);
             if (list != null && !list.isEmpty()) {

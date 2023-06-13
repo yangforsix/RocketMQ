@@ -273,6 +273,7 @@ public abstract class RebalanceImpl {
     private void rebalanceByTopic(final String topic, final boolean isOrder) {
         switch (messageModel) {
             case BROADCASTING: {
+                // 获取本地的该topic的消息队列订阅关系
                 Set<MessageQueue> mqSet = this.topicSubscribeInfoTable.get(topic);
                 if (mqSet != null) {
                     boolean changed = this.updateProcessQueueTableInRebalance(topic, mqSet, isOrder);
@@ -292,6 +293,7 @@ public abstract class RebalanceImpl {
             case CLUSTERING: {
                 // 获取 topic 对应的 队列 和 consumer信息
                 Set<MessageQueue> mqSet = this.topicSubscribeInfoTable.get(topic);
+                // 从本地获取topic路由信息中的broker地址，没有就从NameServer获取，有就根据broker地址从NameServer获取该topic在该broker下的消费者id列表
                 List<String> cidAll = this.mQClientFactory.findConsumerIdList(topic, consumerGroup);
                 if (null == mqSet) {
                     if (!topic.startsWith(MixAll.RETRY_GROUP_TOPIC_PREFIX)) {
@@ -332,7 +334,7 @@ public abstract class RebalanceImpl {
                         allocateResultSet.addAll(allocateResult);
                     }
 
-                    // 更新消费队列
+                    // 更新本地消费队列的相关信息，并重新发起消息拉取请求
                     boolean changed = this.updateProcessQueueTableInRebalance(topic, allocateResultSet, isOrder);
                     if (changed) {
                         log.info(
@@ -389,6 +391,7 @@ public abstract class RebalanceImpl {
             if (mq.getTopic().equals(topic)) {
                 if (!mqSet.contains(mq)) { // 不包含的队列
                     pq.setDropped(true);
+                    // 移除不需要的队列相关的信息
                     if (this.removeUnnecessaryMessageQueue(mq, pq)) {
                         it.remove();
                         changed = true;
@@ -417,16 +420,18 @@ public abstract class RebalanceImpl {
         // 增加 不在processQueueTable && 存在于mqSet 里的消息队列。
         List<PullRequest> pullRequestList = new ArrayList<>(); // 拉消息请求数组
         for (MessageQueue mq : mqSet) {
+            // 如果在topic和消息队列关系表中，但不在消息队列和消息处理队列关系表中
             if (!this.processQueueTable.containsKey(mq)) {
                 if (isOrder && !this.lock(mq)) { // 顺序消息锁定消息队列
                     log.warn("doRebalance, {}, add a new mq failed, {}, because lock failed", consumerGroup, mq);
                     continue;
                 }
-
+                // 去除已经存在的老的进度关系信息
                 this.removeDirtyOffset(mq);
                 ProcessQueue pq = new ProcessQueue();
                 long nextOffset = this.computePullFromWhere(mq);
                 if (nextOffset >= 0) {
+                    // 塞入新的处理队列关系
                     ProcessQueue pre = this.processQueueTable.putIfAbsent(mq, pq);
                     if (pre != null) {
                         log.info("doRebalance, {}, mq already exists, {}", consumerGroup, mq);

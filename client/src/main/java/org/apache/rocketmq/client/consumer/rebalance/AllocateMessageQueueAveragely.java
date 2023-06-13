@@ -60,6 +60,8 @@ public class AllocateMessageQueueAveragely implements AllocateMessageQueueStrate
                 cidAll);
             return result;
         }
+        // cidAll是目标broker下的所有该topic下的消费者id
+        // mqAll是根据topic和消息队列关系中本地的该topic下的所有消息队列
         // 平均分配
         int index = cidAll.indexOf(currentCID); // 第几个consumer。
         int mod = mqAll.size() % cidAll.size(); // 余数，即多少消息队列无法平均分配。

@@ -447,7 +447,9 @@ public class MQClientInstance {
     public void sendHeartbeatToAllBrokerWithLock() {
         if (this.lockHeartbeat.tryLock()) {
             try {
+                // 向broker发送心跳，3秒一次
                 this.sendHeartbeatToAllBroker();
+                // 上传过滤类到Filtersrv
                 this.uploadFilterClassSource();
             } catch (final Exception e) {
                 log.error("sendHeartbeatToAllBroker exception", e);
@@ -763,6 +765,7 @@ public class MQClientInstance {
         byte[] classBody = null;
         int classCRC = 0;
         try {
+            // 订阅关系中的filterClassSource过滤信息
             classBody = filterClassSource.getBytes(MixAll.DEFAULT_CHARSET);
             classCRC = UtilAll.crc32(classBody);
         } catch (Exception e1) {
@@ -774,6 +777,7 @@ public class MQClientInstance {
         TopicRouteData topicRouteData = this.topicRouteTable.get(topic);
         if (topicRouteData != null //
             && topicRouteData.getFilterServerTable() != null && !topicRouteData.getFilterServerTable().isEmpty()) {
+            // 发送注册至每个broker上
             Iterator<Entry<String, List<String>>> it = topicRouteData.getFilterServerTable().entrySet().iterator();
             while (it.hasNext()) {
                 Entry<String, List<String>> next = it.next();
@@ -1079,7 +1083,7 @@ public class MQClientInstance {
 
     /**
      * 获得Broker信息
-     *
+     * 从本地维护的name和address信息表中获取
      * @param brokerName broker名字
      * @param brokerId broker编号
      * @param onlyThisBroker 是否必须是该broker

@@ -55,6 +55,7 @@ public class AllocateMessageQueueAveragelyByCircle implements AllocateMessageQue
         }
 
         // 环状分配
+        // 是消费队列index数是消费者index数的倍数的会被放到同一个消费者上
         int index = cidAll.indexOf(currentCID);
         for (int i = index; i < mqAll.size(); i++) {
             if (i % cidAll.size() == index) {

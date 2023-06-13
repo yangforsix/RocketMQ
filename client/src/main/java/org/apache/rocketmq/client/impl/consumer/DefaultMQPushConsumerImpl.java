@@ -303,9 +303,11 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
 
         final long beginTimestamp = System.currentTimeMillis();
 
+        // 定义broker返回响应拉取请求的结果后的动作
         PullCallback pullCallback = new PullCallback() {
             @Override
             public void onSuccess(PullResult pullResult) {
+                // 获取消息成功
                 if (pullResult != null) {
                     pullResult = DefaultMQPushConsumerImpl.this.pullAPIWrapper.processPullResult(pullRequest.getMessageQueue(), pullResult,
                         subscriptionData);
@@ -331,10 +333,10 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                                 DefaultMQPushConsumerImpl.this.getConsumerStatsManager().incPullTPS(pullRequest.getConsumerGroup(),
                                     pullRequest.getMessageQueue().getTopic(), pullResult.getMsgFoundList().size());
 
-                                // 提交拉取到的消息到消息处理队列
+                                // 实际操作1：提交拉取到的消息到消息处理队列 ####################################################
                                 boolean dispathToConsume = processQueue.putMessage(pullResult.getMsgFoundList());
 
-                                // 提交消费请求
+                                // 实际操作2：提交消费请求 ##################################################################
                                 DefaultMQPushConsumerImpl.this.consumeMessageService.submitConsumeRequest(//
                                     pullResult.getMsgFoundList(), //
                                     processQueue, //
@@ -475,6 +477,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
             );
         } catch (Exception e) {
             log.error("pullKernelImpl exception", e);
+            // 提交延迟拉取请求
             this.executePullRequestLater(pullRequest, PULL_TIME_DELAY_MILLS_WHEN_EXCEPTION);
         }
     }
@@ -941,6 +944,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
             // 创建订阅数据
             SubscriptionData subscriptionData = FilterAPI.buildSubscriptionData(this.defaultMQPushConsumer.getConsumerGroup(), //
                 topic, subExpression);
+            // 将组装好的订阅数据存入本地中
             this.rebalanceImpl.getSubscriptionInner().put(topic, subscriptionData);
             // 通过心跳同步Consumer信息到Broker
             if (this.mQClientFactory != null) {

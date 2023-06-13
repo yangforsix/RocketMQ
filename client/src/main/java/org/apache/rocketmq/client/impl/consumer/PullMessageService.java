@@ -25,6 +25,7 @@ import java.util.concurrent.*;
 
 /**
  * 消费者拉取消息线程服务
+ * 拉取消息服务，不断不断不断从 Broker 拉取消息，并提交消费任务到 ConsumeMessageService
  */
 public class PullMessageService extends ServiceThread {
     private final Logger log = ClientLogger.getLog();
@@ -112,7 +113,7 @@ public class PullMessageService extends ServiceThread {
     @Override
     public void run() {
         log.info(this.getServiceName() + " service started");
-
+        // 拉取消息服务，不断不断不断从 Broker 拉取消息，并提交消费任务到 ConsumeMessageService
         while (!this.isStopped()) {
             try {
                 PullRequest pullRequest = this.pullRequestQueue.take();

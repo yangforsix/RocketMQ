@@ -44,11 +44,13 @@ public class RebalanceService extends ServiceThread {
         this.mqClientFactory = mqClientFactory;
     }
 
+    // 消息队列分配
     @Override
     public void run() {
         log.info(this.getServiceName() + " service started");
 
         while (!this.isStopped()) {
+            // 20s 间隔
             this.waitForRunning(waitInterval);
             this.mqClientFactory.doRebalance();
         }

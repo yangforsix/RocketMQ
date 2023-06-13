@@ -57,7 +57,8 @@ public class ProcessQueue {
     private final ReadWriteLock lockTreeMap = new ReentrantReadWriteLock();
     /**
      * 消息映射
-     * key：消息队列位置
+     * key：消息队列位置 队列offset
+     * value：消息封装格式
      */
     private final TreeMap<Long, MessageExt> msgTreeMap = new TreeMap<>();
     /**

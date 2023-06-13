@@ -292,7 +292,7 @@ public class ConsumeMessageConcurrentlyService implements ConsumeMessageService 
     }
 
     /**
-     * 清理过期消息
+     * 清理过期消息 15min 一次
      */
     private void cleanExpireMsg() {
         Iterator<Map.Entry<MessageQueue, ProcessQueue>> it =
@@ -357,6 +357,7 @@ public class ConsumeMessageConcurrentlyService implements ConsumeMessageService 
                 List<MessageExt> msgBackFailed = new ArrayList<>(consumeRequest.getMsgs().size());
                 for (int i = ackIndex + 1; i < consumeRequest.getMsgs().size(); i++) {
                     MessageExt msg = consumeRequest.getMsgs().get(i);
+                    // 消息发回broker
                     boolean result = this.sendMessageBack(msg, context);
                     if (!result) {
                         msg.setReconsumeTimes(msg.getReconsumeTimes() + 1);
@@ -366,6 +367,8 @@ public class ConsumeMessageConcurrentlyService implements ConsumeMessageService 
 
                 // 发回Broker失败的消息，直接提交延迟重新消费
                 if (!msgBackFailed.isEmpty()) {
+                    // 发送broker失败才会本地重新消费
+                    // 如果发回 Broker 成功，结果因为例如网络异常，导致 Consumer以为发回失败，判定消费发回失败，会导致消息重复消费，因此，消息消费要尽最大可能性实现幂等性。
                     consumeRequest.getMsgs().removeAll(msgBackFailed);
 
                     this.submitConsumeRequestLater(msgBackFailed, consumeRequest.getProcessQueue(), consumeRequest.getMessageQueue());
@@ -376,8 +379,10 @@ public class ConsumeMessageConcurrentlyService implements ConsumeMessageService 
         }
 
         // 移除消费成功消息，并更新最新消费进度
+        // 先移除在processQueue中存储的消息
         long offset = consumeRequest.getProcessQueue().removeMessage(consumeRequest.getMsgs());
         if (offset >= 0 && !consumeRequest.getProcessQueue().isDropped()) {
+            // 更新消费进度
             this.defaultMQPushConsumerImpl.getOffsetStore().updateOffset(consumeRequest.getMessageQueue(), offset, true);
         }
     }
@@ -511,7 +516,7 @@ public class ConsumeMessageConcurrentlyService implements ConsumeMessageService 
                     }
                 }
 
-                // 进行消费
+                // 进行消费，消息设置为不可修改list
                 status = listener.consumeMessage(Collections.unmodifiableList(msgs), context);
             } catch (Throwable e) {
                 log.warn("consumeMessage exception: {} Group: {} Msgs: {} MQ: {}",
@@ -565,6 +570,7 @@ public class ConsumeMessageConcurrentlyService implements ConsumeMessageService 
 
             // 处理消费结果
             if (!processQueue.isDropped()) {
+                // 如果消费处理队列被移除，恰好消息被消费，则可能导致消息重复消费，因此，消息消费要尽最大可能性实现幂等性
                 ConsumeMessageConcurrentlyService.this.processConsumeResult(status, context, this);
             } else {
                 log.warn("processQueue is dropped without process consume result. messageQueue={}, msgs={}", messageQueue, msgs);

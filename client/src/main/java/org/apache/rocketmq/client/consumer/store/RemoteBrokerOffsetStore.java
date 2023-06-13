@@ -58,6 +58,7 @@ public class RemoteBrokerOffsetStore implements OffsetStore {
 
     @Override
     public void load() {
+        // 不进行加载，实际读取消费进度时，从 Broker 获取。
     }
 
     @Override
@@ -82,7 +83,9 @@ public class RemoteBrokerOffsetStore implements OffsetStore {
     public long readOffset(final MessageQueue mq, final ReadOffsetType type) {
         if (mq != null) {
             switch (type) {
+                // 优先从内存读取，读取不到，从存储读取。
                 case MEMORY_FIRST_THEN_STORE:
+                // 从内存读取
                 case READ_FROM_MEMORY: {
                     AtomicLong offset = this.offsetTable.get(mq);
                     if (offset != null) {
@@ -91,10 +94,12 @@ public class RemoteBrokerOffsetStore implements OffsetStore {
                         return -1;
                     }
                 }
+                // 从存储( Broker 或 文件 )读取
                 case READ_FROM_STORE: {
                     try {
                         long brokerOffset = this.fetchConsumeOffsetFromBroker(mq);
                         AtomicLong offset = new AtomicLong(brokerOffset);
+                        // 更新本地进度缓存
                         this.updateOffset(mq, offset.get(), false);
                         return brokerOffset;
                     }
@@ -135,6 +140,7 @@ public class RemoteBrokerOffsetStore implements OffsetStore {
                 if (offset != null) {
                     if (mqs.contains(mq)) {
                         try {
+                            // 更新broker中的进度
                             this.updateConsumeOffsetToBroker(mq, offset.get());
                             log.info("[persistAll] Group: {} ClientId: {} updateConsumeOffsetToBroker {} {}",
                                 this.groupName,
@@ -151,7 +157,7 @@ public class RemoteBrokerOffsetStore implements OffsetStore {
             }
         }
 
-        // 移除不适用的消息队列
+        // 本地移除不适用的消息队列
         if (!unusedMQ.isEmpty()) {
             for (MessageQueue mq : unusedMQ) {
                 this.offsetTable.remove(mq);

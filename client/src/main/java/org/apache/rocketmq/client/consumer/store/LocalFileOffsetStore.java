@@ -47,7 +47,7 @@ public class LocalFileOffsetStore implements OffsetStore {
     private final String groupName;
     private final String storePath;
     /**
-     * 消费进度
+     * 本地消费进度
      */
     private ConcurrentHashMap<MessageQueue, AtomicLong> offsetTable = new ConcurrentHashMap<>();
 
@@ -60,6 +60,7 @@ public class LocalFileOffsetStore implements OffsetStore {
             "offsets.json";
     }
 
+    // 广播模式，本地文件消费进度
     @Override
     public void load() throws MQClientException {
         // 从本地硬盘读取消费进度
@@ -100,7 +101,9 @@ public class LocalFileOffsetStore implements OffsetStore {
     public long readOffset(final MessageQueue mq, final ReadOffsetType type) {
         if (mq != null) {
             switch (type) {
+                // 优先从内存读取，读取不到，从存储读取
                 case MEMORY_FIRST_THEN_STORE:
+                // 从内存读取
                 case READ_FROM_MEMORY: {
                     AtomicLong offset = this.offsetTable.get(mq);
                     if (offset != null) {
@@ -109,6 +112,7 @@ public class LocalFileOffsetStore implements OffsetStore {
                         return -1;
                     }
                 }
+                // 从存储( Broker 或 文件 )读取
                 case READ_FROM_STORE: {
                     OffsetSerializeWrapper offsetSerializeWrapper;
                     try {
@@ -132,6 +136,7 @@ public class LocalFileOffsetStore implements OffsetStore {
         return -1;
     }
 
+    // 持久化消费进度。将消费进度写入文件
     @Override
     public void persistAll(Set<MessageQueue> mqs) {
         if (null == mqs || mqs.isEmpty())
@@ -148,6 +153,7 @@ public class LocalFileOffsetStore implements OffsetStore {
         String jsonString = offsetSerializeWrapper.toJson(true);
         if (jsonString != null) {
             try {
+                // 持久化到文件
                 MixAll.string2File(jsonString, this.storePath);
             } catch (IOException e) {
                 log.error("persistAll consumer offset Exception, " + this.storePath, e);

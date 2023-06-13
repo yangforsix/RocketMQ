@@ -156,7 +156,7 @@ public class ProcessQueue {
             }
 
             try {
-                // 发回超时消息
+                // 发回超时消息，发给broker
                 pushConsumer.sendMessageBack(msg, 3);
                 log.info("send expire msg back. topic={}, msgId={}, storeHost={}, queueId={}, queueOffset={}", msg.getTopic(), msg.getMsgId(), msg.getStoreHost(), msg.getQueueId(), msg.getQueueOffset());
 

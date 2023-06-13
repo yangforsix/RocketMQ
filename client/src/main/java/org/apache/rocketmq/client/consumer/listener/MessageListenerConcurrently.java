@@ -30,6 +30,7 @@ public interface MessageListenerConcurrently extends MessageListener {
      * @param context
      * @return The consume status
      */
+    // 消费执行自定义方法
     ConsumeConcurrentlyStatus consumeMessage(final List<MessageExt> msgs,
         final ConsumeConcurrentlyContext context);
 }

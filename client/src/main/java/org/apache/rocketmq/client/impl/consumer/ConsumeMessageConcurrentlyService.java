@@ -485,7 +485,7 @@ public class ConsumeMessageConcurrentlyService implements ConsumeMessageService 
                 log.info("the message queue not be able to consume, because it's dropped. group={} {}", ConsumeMessageConcurrentlyService.this.consumerGroup, this.messageQueue);
                 return;
             }
-
+            // 获取到注册上来的消费者listener，消费的时候执行其中consumeMessage方法
             MessageListenerConcurrently listener = ConsumeMessageConcurrentlyService.this.messageListener; // 监听器
             ConsumeConcurrentlyContext context = new ConsumeConcurrentlyContext(messageQueue); // 消费Context
             ConsumeConcurrentlyStatus status = null; // 消费结果状态
@@ -517,6 +517,7 @@ public class ConsumeMessageConcurrentlyService implements ConsumeMessageService 
                 }
 
                 // 进行消费，消息设置为不可修改list
+                // 消费执行自定义方法
                 status = listener.consumeMessage(Collections.unmodifiableList(msgs), context);
             } catch (Throwable e) {
                 log.warn("consumeMessage exception: {} Group: {} Msgs: {} MQ: {}",

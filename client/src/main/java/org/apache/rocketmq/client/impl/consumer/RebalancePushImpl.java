@@ -73,6 +73,7 @@ public class RebalancePushImpl extends RebalanceImpl {
             try {
                 if (pq.getLockConsume().tryLock(1000, TimeUnit.MILLISECONDS)) {
                     try {
+                        // 解除broker消息队列锁
                         return this.unlockDelay(mq, pq);
                     } finally {
                         pq.getLockConsume().unlock();
@@ -104,6 +105,7 @@ public class RebalancePushImpl extends RebalanceImpl {
     private boolean unlockDelay(final MessageQueue mq, final ProcessQueue pq) {
         if (pq.hasTempMessage()) { // TODO 疑问：为什么要延迟移除
             log.info("[{}]unlockDelay, begin {} ", mq.hashCode(), mq);
+            // 延迟20s解锁
             this.defaultMQPushConsumerImpl.getmQClientFactory().getScheduledExecutorService().schedule(new Runnable() {
                 @Override
                 public void run() {

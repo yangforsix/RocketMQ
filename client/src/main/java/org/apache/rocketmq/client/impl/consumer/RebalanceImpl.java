@@ -146,7 +146,7 @@ public abstract class RebalanceImpl {
 
     /**
      * 请求Broker获得指定消息队列的分布式锁
-     *
+     * 锁定消息队列，不让新增或者删除消息队列，队列层级
      * @param mq 队列
      * @return 是否成功
      */
@@ -165,13 +165,15 @@ public abstract class RebalanceImpl {
 
                 // 设置消息处理队列锁定成功。锁定消息队列成功，可能本地没有消息处理队列，设置锁定成功会在lockAll()方法。
                 for (MessageQueue mmqq : lockedMq) {
+                    // processQueueTable 维护了 消息队列和这个消息队列的消息消费进度
+                    // 这里拿到锁定成功的消息队列的消息消费进度
                     ProcessQueue processQueue = this.processQueueTable.get(mmqq);
                     if (processQueue != null) {
                         processQueue.setLocked(true);
                         processQueue.setLastLockTimestamp(System.currentTimeMillis());
                     }
                 }
-
+                // 判断需要发送的mq在不在已经锁定的消息队列中
                 boolean lockOK = lockedMq.contains(mq);
                 log.info("the message queue lock {}, {} {}",
                     lockOK ? "OK" : "Failed",

@@ -462,7 +462,7 @@ public class HAService {
                         lastWriteTimestamp = HAService.this.defaultMessageStore.getSystemClock().now();
 
                         readSizeZeroTimes = 0;
-
+                        // 处理传输数据
                         boolean result = this.dispatchReadRequest();
                         if (!result) {
                             log.error("HAClient, dispatchReadRequest error");
@@ -553,11 +553,15 @@ public class HAService {
          */
         private boolean reportSlaveMaxOffsetPlus() {
             boolean result = true;
+            // 获取当前偏移量
             long currentPhyOffset = HAService.this.defaultMessageStore.getMaxPhyOffset();
+            // 比当前记录的偏移量大
             if (currentPhyOffset > this.currentReportedOffset) {
+                // 就更新并且上报
                 this.currentReportedOffset = currentPhyOffset;
                 result = this.reportSlaveMaxOffset(this.currentReportedOffset);
                 if (!result) {
+                    // 上报失败关闭链接
                     this.closeMaster();
                     log.error("HAClient, reportSlaveMaxOffset error, " + this.currentReportedOffset);
                 }

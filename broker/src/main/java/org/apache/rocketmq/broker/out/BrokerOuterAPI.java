@@ -118,8 +118,9 @@ public class BrokerOuterAPI {
 
         List<String> nameServerAddressList = this.remotingClient.getNameServerAddressList();
         if (nameServerAddressList != null) {
-            for (String namesrvAddr : nameServerAddressList) { // 循环多个 Namesrv
+            for (String namesrvAddr : nameServerAddressList) { // 循环多个 Namesrv地址
                 try {
+                    // 注册broker到Namesrv
                     RegisterBrokerResult result = this.registerBroker(namesrvAddr, clusterName, brokerAddr, brokerName, brokerId,
                         haServerAddr, topicConfigWrapper, filterServerList, oneway, timeoutMills);
                     if (result != null) {

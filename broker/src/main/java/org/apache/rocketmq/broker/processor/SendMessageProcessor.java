@@ -209,6 +209,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
                 return response;
             }
         } else {
+            // 如果延时等级没有设置，就自动获取重试次数 + 3 的值作为延时等级
             if (0 == delayLevel) {
                 delayLevel = 3 + msgExt.getReconsumeTimes();
             }

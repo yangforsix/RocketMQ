@@ -94,11 +94,14 @@ public class ScheduleMessageService extends ConfigManager {
      * @return 投递时间【计划消费时间】
      */
     public long computeDeliverTimestamp(final int delayLevel, final long storeTimestamp) {
+        // 获取对应的延时时长
         Long time = this.delayLevelTable.get(delayLevel);
         if (time != null) {
+            // storeTimestamp 消息被存储到 Broker 服务器上的时间,这里还没有被存储到commitLog,应该为发送创建时间
+            // 计算得出最终应该被投递的时间
             return time + storeTimestamp;
         }
-
+        // 没有获取到对应的延时时长就默认延时一秒
         return storeTimestamp + 1000;
     }
 
@@ -117,7 +120,7 @@ public class ScheduleMessageService extends ConfigManager {
             }
         }
 
-        // 定时持久化发送进度
+        // 定时持久化发送进度 10s 一次
         this.timer.scheduleAtFixedRate(new TimerTask() {
 
             @Override
@@ -178,26 +181,33 @@ public class ScheduleMessageService extends ConfigManager {
      * @return 是否解析成功
      */
     public boolean parseDelayLevel() {
+        // 预置延时级别
         HashMap<String, Long> timeUnitTable = new HashMap<>();
         timeUnitTable.put("s", 1000L);
         timeUnitTable.put("m", 1000L * 60);
         timeUnitTable.put("h", 1000L * 60 * 60);
         timeUnitTable.put("d", 1000L * 60 * 60 * 24);
-
+        // "1s 5s 10s 30s 1m 2m 3m 4m 5m 6m 7m 8m 9m 10m 20m 30m 1h 2h"
         String levelString = this.defaultMessageStore.getMessageStoreConfig().getMessageDelayLevel();
         try {
+            // 空格拆分
             String[] levelArray = levelString.split(" ");
             for (int i = 0; i < levelArray.length; i++) {
                 String value = levelArray[i];
+                // 拆分延时单位
                 String ch = value.substring(value.length() - 1);
+                // 获得延时等级
                 Long tu = timeUnitTable.get(ch);
-
+                // 延时等级阈值判断
                 int level = i + 1;
                 if (level > this.maxDelayLevel) {
                     this.maxDelayLevel = level;
                 }
+                // 获取延时时长单位
                 long num = Long.parseLong(value.substring(0, value.length() - 1));
+                // 获得最终延时时长
                 long delayTimeMillis = tu * num;
+                // 存入本地维护的延时等级和延时时长表
                 this.delayLevelTable.put(level, delayTimeMillis);
             }
         } catch (Exception e) {
@@ -230,6 +240,7 @@ public class ScheduleMessageService extends ConfigManager {
         @Override
         public void run() {
             try {
+                // 判断是否可以交付消息
                 this.executeOnTimeup();
             } catch (Exception e) {
                 // XXX: warn and notify me
@@ -259,34 +270,41 @@ public class ScheduleMessageService extends ConfigManager {
         }
 
         public void executeOnTimeup() {
+            // 获取对应延时的消费队列
             ConsumeQueue cq = ScheduleMessageService.this.defaultMessageStore.findConsumeQueue(SCHEDULE_TOPIC,  delayLevel2QueueId(delayLevel));
 
             long failScheduleOffset = offset;
 
             if (cq != null) {
+                // 根据上次发送的offset找到下一条消息为开始的映射文件
                 SelectMappedBufferResult bufferCQ = cq.getIndexBuffer(this.offset);
                 if (bufferCQ != null) {
                     try {
                         long nextOffset = offset;
                         int i = 0;
+                        // 循环获取消息
                         for (; i < bufferCQ.getSize(); i += ConsumeQueue.CQ_STORE_UNIT_SIZE) {
+                            // 获取消息的相关信息（消费队列中的）
                             long offsetPy = bufferCQ.getByteBuffer().getLong();
                             int sizePy = bufferCQ.getByteBuffer().getInt();
                             long tagsCode = bufferCQ.getByteBuffer().getLong();
-
+                            // 当前时间
                             long now = System.currentTimeMillis();
+                            // 根据配置的延时等级，修正正确的交付时间
                             long deliverTimestamp = this.correctDeliverTimestamp(now, tagsCode);
-
+                            // 预置offset为下一条消息的offset
                             nextOffset = offset + (i / ConsumeQueue.CQ_STORE_UNIT_SIZE);
-
+                            // 获取相差时间
                             long countdown = deliverTimestamp - now;
 
                             if (countdown <= 0) { // 消息到达可发送时间
+                                // 转为消息格式
                                 MessageExt msgExt = ScheduleMessageService.this.defaultMessageStore.lookMessageByOffset(offsetPy, sizePy);
                                 if (msgExt != null) {
                                     try {
                                         // 发送消息
                                         MessageExtBrokerInner msgInner = this.messageTimeup(msgExt);
+                                        // 保存到commitLog，作为正常消息存入供消费者消费
                                         PutMessageResult putMessageResult = ScheduleMessageService.this.defaultMessageStore.putMessage(msgInner);
                                         if (putMessageResult != null && putMessageResult.getPutMessageStatus() == PutMessageStatus.PUT_OK) { // 发送成功
                                             continue;
@@ -338,7 +356,7 @@ public class ScheduleMessageService extends ConfigManager {
                     }
                 }
             } // end of if (cq != null)
-
+            // 根据进度放置100ms后的延时任务
             ScheduleMessageService.this.timer.schedule(new DeliverDelayedMessageTimerTask(this.delayLevel, failScheduleOffset), DELAY_FOR_A_WHILE);
         }
 

@@ -378,6 +378,7 @@ public class CommitLog {
                         }
 
                         if (delayLevel > 0) {
+                            // 计算得出本消息应该被投递的时间作为tag名称
                             tagsCode = this.defaultMessageStore.getScheduleMessageService().computeDeliverTimestamp(delayLevel,
                                 storeTimestamp);
                         }
@@ -613,6 +614,7 @@ public class CommitLog {
             // Delay Delivery
             // 如果消息存在延迟推送等级，说明是延迟消息则把延迟消息设定到响应的延迟队列中
             if (msg.getDelayTimeLevel() > 0) {
+                // 阈值措施
                 if (msg.getDelayTimeLevel() > this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel()) {
                     msg.setDelayTimeLevel(this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel());
                 }
@@ -621,6 +623,7 @@ public class CommitLog {
                 topic = ScheduleMessageService.SCHEDULE_TOPIC;
 
                 // 延迟级别 与 消息队列编号 做固定映射
+                // 塞入 延时等级-1 为队列id的消费队列中
                 queueId = ScheduleMessageService.delayLevel2QueueId(msg.getDelayTimeLevel());
 
                 // Backup real topic, queueId
